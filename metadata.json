@@ -1,0 +1,5 @@
+{
+  "name": "NeuroVoxel Engine",
+  "description": "A next-generation web-based voxel engine featuring infinite multi-scale world architecture, GPU-centric rendering via React Three Fiber, and predictive chunk management.",
+  "requestFramePermissions": []
+}
