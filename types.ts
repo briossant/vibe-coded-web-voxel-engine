@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 export type Vector3 = [number, number, number];
@@ -78,20 +77,38 @@ export interface BlockDefinition {
 declare global {
   namespace JSX {
     interface IntrinsicElements {
+      group: any;
       mesh: any;
       meshStandardMaterial: any;
       instancedMesh: any;
       boxGeometry: any;
-      planeGeometry: any;
-      color: any;
-      fog: any;
-      fogExp2: any;
+      primitive: any;
       ambientLight: any;
       directionalLight: any;
       hemisphereLight: any;
+      color: any;
+      fogExp2: any;
+      [elemName: string]: any;
+    }
+  }
+}
+
+// Augment React's internal JSX namespace for compatibility with strict configurations
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements {
       group: any;
-      pointLight: any;
+      mesh: any;
+      meshStandardMaterial: any;
+      instancedMesh: any;
+      boxGeometry: any;
       primitive: any;
+      ambientLight: any;
+      directionalLight: any;
+      hemisphereLight: any;
+      color: any;
+      fogExp2: any;
+      [elemName: string]: any;
     }
   }
 }

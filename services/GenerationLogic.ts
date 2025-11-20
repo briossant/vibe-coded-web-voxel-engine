@@ -40,83 +40,249 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
 
     const getIndex = (x: number, y: number, z: number) => (x * WORLD_HEIGHT + y) * CHUNK_SIZE + z;
 
+    // 3D Hash Helper
+    const hash3 = (x: number, y: number, z: number) => hash(x + y * 31, z, SEED);
+
     function safeSetBlock(x: number, y: number, z: number, block: number) {
         if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE && y >= 0 && y < WORLD_HEIGHT) {
             const idx = getIndex(x, y, z);
             const current = chunkBuffer[idx];
-            // Don't overwrite solid blocks with foliage/water if we are doing decoration passes
-            if (current === BLOCKS.AIR || current === BLOCKS.WATER || current === BLOCKS.TALL_GRASS || current >= BLOCKS.FLOWER_YELLOW) {
+            
+            const isCurrentFoliage = current === BLOCKS.WATER || current === BLOCKS.TALL_GRASS || (current >= BLOCKS.FLOWER_YELLOW && current <= BLOCKS.SEAGRASS) || 
+                                     current === BLOCKS.OAK_LEAVES || current === BLOCKS.BIRCH_LEAVES || current === BLOCKS.SPRUCE_LEAVES || 
+                                     current === BLOCKS.JUNGLE_LEAVES || current === BLOCKS.ACACIA_LEAVES;
+            
+            const isNewLog = block === BLOCKS.OAK_LOG || block === BLOCKS.BIRCH_LOG || block === BLOCKS.SPRUCE_LOG || 
+                             block === BLOCKS.ACACIA_LOG || block === BLOCKS.JUNGLE_LOG;
+
+            // Logic:
+            // 1. Always overwrite AIR.
+            // 2. Always overwrite Water/Plants (Foliage).
+            // 3. If current is Leaves, only overwrite if we are placing Logs. (Branches cutting through leaves).
+            
+            if (current === BLOCKS.AIR || isCurrentFoliage) {
+                const isCurrentLeaf = current === BLOCKS.OAK_LEAVES || current === BLOCKS.BIRCH_LEAVES || 
+                                      current === BLOCKS.SPRUCE_LEAVES || current === BLOCKS.JUNGLE_LEAVES || current === BLOCKS.ACACIA_LEAVES;
+                
+                if (isCurrentLeaf && !isNewLog) {
+                    return; // Keep existing leaves unless it's a log
+                }
                 chunkBuffer[idx] = block;
             }
         }
     }
 
-    // --- TREE PLACEMENT LOGIC ---
+    // Helper: Draw line of blocks (for branches)
+    function placeLogLine(x1: number, y1: number, z1: number, x2: number, y2: number, z2: number, block: number) {
+        const dist = Math.max(Math.abs(x2-x1), Math.abs(y2-y1), Math.abs(z2-z1));
+        if (dist === 0) {
+            safeSetBlock(Math.floor(x1), Math.floor(y1), Math.floor(z1), block);
+            return;
+        }
+        
+        const dx = (x2-x1)/dist;
+        const dy = (y2-y1)/dist;
+        const dz = (z2-z1)/dist;
+
+        for (let i=0; i<=dist; i++) {
+            safeSetBlock(Math.floor(x1 + dx*i), Math.floor(y1 + dy*i), Math.floor(z1 + dz*i), block);
+        }
+    }
+
+    // Helper: Place sphere/blob of leaves
+    function placeLeafBlob(cx: number, cy: number, cz: number, radius: number, block: number, density: number = 1.0) {
+        const rSq = radius * radius;
+        const ir = Math.ceil(radius);
+        for (let x = -ir; x <= ir; x++) {
+            for (let y = -ir; y <= ir; y++) {
+                for (let z = -ir; z <= ir; z++) {
+                    const dSq = x*x + y*y + z*z;
+                    if (dSq <= rSq) {
+                        // Random fluff removal for "natural" look
+                        if (dSq >= rSq - 2 && hash3(cx+x, cy+y, cz+z) > density) continue;
+                        safeSetBlock(cx+x, cy+y, cz+z, block);
+                    }
+                }
+            }
+        }
+    }
+
+    // Helper: Disk/Diamond layer for Spruce/Pine
     function placeLeafLayer(cx: number, cy: number, cz: number, r: number, type: number) {
+        const rSq = r * r;
         for (let i = -r; i <= r; i++) {
             for (let j = -r; j <= r; j++) {
-                // Round off the corners slightly for r > 1
-                if (Math.abs(i) === r && Math.abs(j) === r && r > 1) {
-                     if (hash(cx + i, cz + j, cy) > 0.5) continue; 
+                const d = Math.abs(i) + Math.abs(j);
+                const d2 = i*i + j*j;
+                // Diamond/Circle hybrid shape
+                if (d <= r * 1.2 && d2 <= rSq + 1) {
+                    safeSetBlock(cx + i, cy, cz + j, type);
                 }
-                safeSetBlock(cx + i, cy, cz + j, type);
             }
         }
     }
 
     function placeTree(x: number, y: number, z: number, typeStr: string) {
-        let typeIdx = 0; 
-        if (typeStr === 'BIRCH') typeIdx = 1;
-        else if (typeStr === 'SPRUCE') typeIdx = 2;
-        else if (typeStr === 'JUNGLE') typeIdx = 3;
-        else if (typeStr === 'ACACIA') typeIdx = 4;
+        const rVal = hash3(x, y, z);
+        
+        let logType: number = BLOCKS.OAK_LOG;
+        let leafType: number = BLOCKS.OAK_LEAVES;
+        let treeTypeIdx = 0;
+        
+        if (typeStr === 'BIRCH') { logType = BLOCKS.BIRCH_LOG; leafType = BLOCKS.BIRCH_LEAVES; treeTypeIdx = 1; }
+        else if (typeStr === 'SPRUCE') { logType = BLOCKS.SPRUCE_LOG; leafType = BLOCKS.SPRUCE_LEAVES; treeTypeIdx = 2; }
+        else if (typeStr === 'JUNGLE') { logType = BLOCKS.JUNGLE_LOG; leafType = BLOCKS.JUNGLE_LEAVES; treeTypeIdx = 3; }
+        else if (typeStr === 'ACACIA') { logType = BLOCKS.ACACIA_LOG; leafType = BLOCKS.ACACIA_LEAVES; treeTypeIdx = 4; }
 
-        // Record tree for InstancedMesh rendering (optimization)
+        // Store for LOD
         if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE) {
-            trees.push({ x, y, z, type: typeIdx });
+            trees.push({ x, y, z, type: treeTypeIdx });
         }
 
-        // Voxel Structure Generation
-        if (typeStr === 'OAK' || typeStr === 'BIRCH') {
-            const h = typeStr === 'BIRCH' ? 6 : 5;
-            const log = typeStr === 'BIRCH' ? BLOCKS.BIRCH_LOG : BLOCKS.OAK_LOG;
-            const leaves = typeStr === 'BIRCH' ? BLOCKS.BIRCH_LEAVES : BLOCKS.OAK_LEAVES;
+        // --- ADVANCED TREE ALGORITHMS ---
+
+        if (typeStr === 'OAK') {
+            const isBig = rVal > 0.65; 
             
-            for (let i = 0; i < h; i++) safeSetBlock(x, y + i, z, log);
-            placeLeafLayer(x, y+h-2, z, 2, leaves);
-            placeLeafLayer(x, y+h-1, z, 2, leaves);
-            placeLeafLayer(x, y+h, z, 1, leaves);
-            placeLeafLayer(x, y+h+1, z, 1, leaves);
-        } 
-        else if (typeStr === 'SPRUCE') {
-             const h = 7 + Math.floor(hash(x, z, SEED) * 5);
-             for(let i=0; i<h; i++) safeSetBlock(x, y + i, z, BLOCKS.SPRUCE_LOG);
-             for(let i=2; i<h; i++) {
-                 const r = Math.floor((h-i)*0.35) + 1;
-                 placeLeafLayer(x, y+i, z, r, BLOCKS.SPRUCE_LEAVES);
-             }
-             placeLeafLayer(x, y+h, z, 1, BLOCKS.SPRUCE_LEAVES);
+            if (isBig) {
+                // FANCY BIG OAK
+                const height = 7 + Math.floor(rVal * 6); // 7-12
+                
+                // Trunk
+                placeLogLine(x, y, z, x, y+height-2, z, logType);
+                
+                // Roots
+                if (hash3(x, y, z+1) > 0.4) safeSetBlock(x+1, y, z, logType);
+                if (hash3(x, y, z-1) > 0.4) safeSetBlock(x-1, y, z, logType);
+                if (hash3(x+1, y, z) > 0.4) safeSetBlock(x, y, z+1, logType);
+                if (hash3(x-1, y, z) > 0.4) safeSetBlock(x, y, z-1, logType);
+
+                // Branches
+                const numBranches = 3 + Math.floor(hash3(x, height, z) * 3); // 3-5
+                for (let b = 0; b < numBranches; b++) {
+                    // Branch start height (top 50% of tree)
+                    const startH = Math.floor(height * 0.4) + Math.floor(hash3(x, b, z) * (height * 0.4));
+                    
+                    // Direction
+                    const angle = hash3(b, y, x) * Math.PI * 2;
+                    const len = 3 + hash3(z, b, y) * 3; // 3-6 length
+                    const lift = 1 + hash3(x, z, b) * 3; // 1-4 upward
+                    
+                    const bx = x + Math.cos(angle) * len;
+                    const bz = z + Math.sin(angle) * len;
+                    const by = y + startH + lift;
+                    
+                    placeLogLine(x, y + startH, z, Math.floor(bx), Math.floor(by), Math.floor(bz), logType);
+                    placeLeafBlob(Math.floor(bx), Math.floor(by), Math.floor(bz), 2.5, leafType, 0.7);
+                }
+                // Top Canopy
+                placeLeafBlob(x, y+height, z, 3.5, leafType, 0.6);
+            } else {
+                // STANDARD OAK
+                const height = 5 + Math.floor(rVal * 3);
+                // Trunk
+                placeLogLine(x, y, z, x, y+height-1, z, logType);
+                
+                // Main foliage blob
+                placeLeafBlob(x, y+height, z, 2.8, leafType, 0.8);
+                // Lower varied blobs
+                placeLeafBlob(x+1, y+height-2, z, 2.0, leafType, 0.8);
+                placeLeafBlob(x-1, y+height-2, z, 2.0, leafType, 0.8);
+                placeLeafBlob(x, y+height-2, z+1, 2.0, leafType, 0.8);
+            }
         }
-        else if (typeStr === 'JUNGLE') {
-            const h = 12 + Math.floor(hash(x, z, SEED) * 10); // Taller jungle trees
-            for (let i = 0; i < h; i++) safeSetBlock(x, y + i, z, BLOCKS.JUNGLE_LOG);
-            placeLeafLayer(x, y+h-2, z, 3, BLOCKS.JUNGLE_LEAVES);
-            placeLeafLayer(x, y+h-1, z, 3, BLOCKS.JUNGLE_LEAVES);
-            placeLeafLayer(x, y+h, z, 2, BLOCKS.JUNGLE_LEAVES);
-            safeSetBlock(x, y+h, z, BLOCKS.JUNGLE_LOG);
+        else if (typeStr === 'BIRCH') {
+             // TALL & SLENDER
+             const height = 7 + Math.floor(rVal * 5); // 7-11
+             
+             // Trunk
+             placeLogLine(x, y, z, x, y+height, z, logType);
+             
+             // Layered Canopy (Cylindrical feel)
+             const canopyStart = Math.floor(height * 0.5);
+             
+             // Top
+             placeLeafBlob(x, y+height+1, z, 1.5, leafType, 0.9);
+             
+             for (let i = canopyStart; i <= height; i += 2) {
+                 const r = 1.8 + hash3(x, i, z) * 0.8;
+                 placeLeafBlob(x, y+i, z, r, leafType, 0.75);
+             }
+        }
+        else if (typeStr === 'SPRUCE') {
+            // CONICAL & LAYERED
+            const height = 10 + Math.floor(rVal * 14); // 10-23
+            
+            // Trunk
+            placeLogLine(x, y, z, x, y+height-1, z, logType);
+
+            // Layers
+            let maxR = 3.5 + hash3(x,y,z);
+            const startLeaf = 3;
+            
+            for (let ly = startLeaf; ly < height; ly++) {
+                // Normalized height
+                const nh = (ly - startLeaf) / (height - startLeaf);
+                // Radius tapers as we go up
+                const r = Math.max(0.5, maxR * (1.0 - nh));
+                
+                // Whorls: Only place layers every 2nd block, or random
+                if (ly % 2 === 0 || ly === height-1) {
+                    const ri = Math.ceil(r);
+                    placeLeafLayer(x, y + ly, z, ri, leafType);
+                }
+            }
+            // Pointy Top
+            safeSetBlock(x, y+height, z, leafType);
+            safeSetBlock(x, y+height+1, z, leafType);
         }
         else if (typeStr === 'ACACIA') {
-            const h = 5 + Math.floor(hash(x, z, SEED) * 3);
-            for (let i = 0; i < h; i++) safeSetBlock(x, y + i, z, BLOCKS.ACACIA_LOG);
+             const height = 5 + Math.floor(rVal * 4);
+             // Forked Trunk
+             const forkH = Math.max(2, Math.floor(height * 0.6));
+             placeLogLine(x, y, z, x, y+forkH, z, logType);
+             
+             const numBranches = 2 + (hash3(x,z,y) > 0.5 ? 1 : 0);
+             
+             for(let i=0; i<numBranches; i++) {
+                 // Angle spread
+                 const ang = (Math.PI * 2 * i) / numBranches + hash3(x,i,z);
+                 const len = 2 + hash3(z,i,y) * 3;
+                 const bx = x + Math.cos(ang) * len;
+                 const bz = z + Math.sin(ang) * len;
+                 const by = y + height + (hash3(x,z,i) * 2 - 1);
+                 
+                 placeLogLine(x, y+forkH, z, Math.floor(bx), Math.floor(by), Math.floor(bz), logType);
+                 placeLeafLayer(Math.floor(bx), Math.floor(by), Math.floor(bz), 2.5, leafType);
+             }
+        }
+        else if (typeStr === 'JUNGLE') {
+            // MEGA JUNGLE TREE
+            const height = 22 + Math.floor(rVal * 15);
             
-            // Branches
-            safeSetBlock(x+1, y+h-1, z, BLOCKS.ACACIA_LOG);
-            safeSetBlock(x+2, y+h, z, BLOCKS.ACACIA_LOG);
-            placeLeafLayer(x+2, y+h+1, z, 2, BLOCKS.ACACIA_LEAVES);
-
-            safeSetBlock(x-1, y+h-2, z, BLOCKS.ACACIA_LOG);
-            safeSetBlock(x-2, y+h-1, z, BLOCKS.ACACIA_LOG);
-            placeLeafLayer(x-2, y+h, z, 2, BLOCKS.ACACIA_LEAVES);
+            // 2x2 Trunk (approx)
+            for(let i=0; i<height; i++) {
+                safeSetBlock(x, y+i, z, logType);
+                safeSetBlock(x+1, y+i, z, logType);
+                safeSetBlock(x, y+i, z+1, logType);
+                safeSetBlock(x+1, y+i, z+1, logType);
+            }
+            
+            // Huge Top Canopy
+            placeLeafBlob(x, y+height, z, 6.5, leafType, 0.7);
+            
+            // Occasional side bushes / vines
+            for(let i=5; i<height-6; i+=4) {
+                if (hash3(x,i,z) > 0.3) {
+                    const dir = hash3(z,i,x) * Math.PI * 2;
+                    const len = 2 + hash3(x,z,i) * 3;
+                    const bx = x + Math.cos(dir) * len;
+                    const bz = z + Math.sin(dir) * len;
+                    
+                    placeLogLine(x, y+i, z, Math.floor(bx), y+i+1, Math.floor(bz), logType);
+                    placeLeafBlob(Math.floor(bx), y+i+1, Math.floor(bz), 2.8, leafType, 0.8);
+                }
+            }
         }
     }
 
@@ -157,11 +323,7 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
                             case BIOMES.SAVANNA: block = BLOCKS.DIRT; break; 
                             case BIOMES.MESA: block = BLOCKS.RED_SAND; break;
                             case BIOMES.RIVER: 
-                                // Improved River Banking:
-                                // Only place sand/gravel very close to water level.
-                                // Higher up on the river valley slopes, use Grass.
                                 if (y <= WATER_LEVEL + 2) {
-                                    // Erosion mix: 30% chance of gravel near water
                                     block = hash(x, z, SEED) > 0.3 ? BLOCKS.SAND : BLOCKS.GRAVEL;
                                 } else {
                                     block = BLOCKS.GRASS;
@@ -182,7 +344,6 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
                     
                     // Mesa Banding Pattern
                     if (biome === BIOMES.MESA && y > WATER_LEVEL) {
-                        // Simple noise for banding variation
                         const noiseVal = hash(x, y, SEED) + hash(z, y, SEED);
                         const band = (y + Math.floor(noiseVal * 2)) % 9;
                         if (band === 0 || band === 1) block = BLOCKS.RED_SANDSTONE;
@@ -190,21 +351,17 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
                         else block = BLOCKS.RED_SAND;
                     }
                     
-                    // Snow Capping on High Peaks regardless of biome
-                    if (y > 230) { // Raised snow level for new height
+                    // Snow Capping on High Peaks
+                    if (y > 230) { 
                         if (y === groundHeight) block = BLOCKS.SNOW;
-                        else if (y > groundHeight - 3) block = BLOCKS.SNOW; // Deep snow
+                        else if (y > groundHeight - 3) block = BLOCKS.SNOW;
                     }
 
-                    // Caves (Simplex Worms)
-                    // Optimized 3D-ish noise check
+                    // Caves
                     if (y < groundHeight - 4 && y > 4) {
-                         // Create 3D noise feel by using y in input
                          const caveScale = 0.06;
-                         // Perturb Y slightly to make caves non-vertical
                          const caveNoise = noise.noise2D(wx * caveScale, (y + wz) * caveScale) + 
                                          noise.noise2D((wx + y) * caveScale, wz * caveScale);
-                         // Increase threshold slightly deeper down
                          const threshold = y < 40 ? 1.25 : 1.35;
                          if (caveNoise > threshold) block = BLOCKS.AIR;
                     }
@@ -218,14 +375,13 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
     }
 
     // 2. DECORATION PASS (Trees, Flowers, Ores)
-    const TREE_MARGIN = 4; // Look outside chunk to spawn trees that overlap
+    const TREE_MARGIN = 6; 
     for (let x = -TREE_MARGIN; x < CHUNK_SIZE + TREE_MARGIN; x++) {
         for (let z = -TREE_MARGIN; z < CHUNK_SIZE + TREE_MARGIN; z++) {
             const wx = worldX + x;
             const wz = worldZ + z;
             
             let h, biome;
-            // Optimization: Use cached map for internal, calc for margin
             if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE) {
                 h = heightMap[x * CHUNK_SIZE + z];
                 biome = biomeMap[x * CHUNK_SIZE + z];
@@ -254,9 +410,8 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
             let treeType: string | null = null;
             let treeChance = 0;
 
-            // Trees don't spawn too high up (treeline)
             if (h < 210) {
-                if (biome === BIOMES.FOREST) { treeChance = 0.08; treeType = 'OAK'; if (r > 0.7) treeType = 'BIRCH'; }
+                if (biome === BIOMES.FOREST) { treeChance = 0.06; treeType = 'OAK'; if (r > 0.7) treeType = 'BIRCH'; }
                 else if (biome === BIOMES.PLAINS) { treeChance = 0.002; treeType = 'OAK'; }
                 else if (biome === BIOMES.SNOWY) { treeChance = 0.02; treeType = 'SPRUCE'; }
                 else if (biome === BIOMES.MOUNTAIN) { treeChance = 0.005; treeType = 'SPRUCE'; }
@@ -298,7 +453,7 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
         }
     }
 
-    // Determine dominant biome for distant terrain LOD color
+    // Determine dominant biome
     let domB = 'plain';
     if (biomeCounts[BIOMES.OCEAN] > 50) domB = 'ocean';
     else if (biomeCounts[BIOMES.DESERT] > 50) domB = 'desert';

@@ -3,7 +3,6 @@ import React, { useMemo } from 'react';
 import * as THREE from 'three';
 import { ChunkData } from '../types';
 import { CHUNK_SIZE, WORLD_HEIGHT } from '../constants';
-import { getBlockFromChunk } from '../services/TerrainGenerator';
 import { globalTexture, getUVOffset, TEXTURE_ATLAS_SIZE } from '../utils/textures';
 import { getBlockDef, BlockType } from '../blocks';
 
@@ -22,20 +21,22 @@ const isWaterOrUnderwaterPlant = (type: number) => {
     const def = getBlockDef(type);
     return def.isFluid || (def.isSprite && type === BlockType.SEAGRASS); // Special case for seagrass
 };
+
+// Ground = Terrain Skin. Exclude Wood (Trees) so they don't stretch.
 const isGround = (type: number) => {
     const def = getBlockDef(type);
+    // Exclude Logs and Leaves so they render as distinct blocks instead of terrain skin
+    if (def.category === 'Wood') return false; 
+    if (type === BlockType.CACTUS || type === BlockType.MELON) return false;
     return def.isSolid && !def.isTransparent && !def.isFluid;
 };
 
-// Blocks that are solid but distinct features (logs, leaves, cactus)
+// Features = Objects on top of terrain (Trees, Cactus, etc)
 const isBlockFeature = (type: number) => {
     const def = getBlockDef(type);
-    // It is a feature if it's solid, but either transparent (leaves) or special model (cactus)
-    // OR if it is a log (we usually want to render logs even if surrounded by leaves)
-    if (type === BlockType.OAK_LOG || type === BlockType.BIRCH_LOG || type === BlockType.SPRUCE_LOG || 
-        type === BlockType.ACACIA_LOG || type === BlockType.JUNGLE_LOG) return true;
+    // Include all Wood (Logs & Leaves) to be rendered as individual blocks in LOD 1
+    if (def.category === 'Wood') return true; 
     if (type === BlockType.CACTUS || type === BlockType.MELON) return true;
-    if (def.isTransparent && def.isSolid) return true; // Leaves
     return false;
 };
 
@@ -360,3 +361,4 @@ const arePropsEqual = (prev: ChunkMeshProps, next: ChunkMeshProps) => {
 };
 
 export default React.memo(ChunkMesh, arePropsEqual);
+    

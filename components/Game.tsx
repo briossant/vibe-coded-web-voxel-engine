@@ -156,14 +156,15 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
           const dz = Math.abs(chunk.z - cz);
           const dist = Math.max(dx, dz); 
 
+          // LOD Strategy: 
+          // 0 = Full Voxel Mesh (Closest)
+          // 1 = Surface Mesh (Medium Range)
+          // DistantTerrain (Low Detail)
+          
           if (dist < 2) {
               high.push({ chunk, lod: 0 });
-          } else if (dist < 5) {
-              high.push({ chunk, lod: 1 });
-          } else if (dist < 8) {
-              high.push({ chunk, lod: 2 });
           } else if (dist < 16) {
-              high.push({ chunk, lod: 3 });
+              high.push({ chunk, lod: 1 });
           } else {
               low.push(chunk);
           }
