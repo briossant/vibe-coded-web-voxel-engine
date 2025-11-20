@@ -1,5 +1,4 @@
 
-
 import { ChunkData } from '../types';
 import { CHUNK_SIZE, WORLD_HEIGHT, WATER_LEVEL } from '../constants';
 
@@ -9,6 +8,7 @@ const GET_WORKER_CODE = (seed: number) => `
 const CHUNK_SIZE = ${CHUNK_SIZE};
 const WORLD_HEIGHT = ${WORLD_HEIGHT};
 const WATER_LEVEL = ${WATER_LEVEL};
+const SEED = ${seed};
 
 // --- NOISE UTILS ---
 const F2 = 0.5 * (Math.sqrt(3.0) - 1.0);
@@ -23,10 +23,12 @@ function mulberry32(a) {
     }
 }
 
+// Updated hash function to include SEED for unique object placement
 function hash(x, z) {
     let h = 0xdeadbeef;
     h = Math.imul(h ^ x, 0x85ebca6b);
     h = Math.imul(h ^ z, 0xc2b2ae35);
+    h = Math.imul(h ^ SEED, 0x12345678); // Mix in seed
     h ^= h >>> 16;
     return (h >>> 0) / 4294967296;
 }
@@ -111,59 +113,134 @@ const TULIP_ORANGE = 22;
 const TULIP_WHITE = 23;
 const TULIP_PINK = 24;
 const CORNFLOWER = 25;
+const ACACIA_LOG = 26;
+const ACACIA_LEAVES = 27;
+const JUNGLE_LOG = 28;
+const JUNGLE_LEAVES = 29;
+const RED_SAND = 30;
+const RED_SANDSTONE = 31;
+const MELON = 32;
+const BLUE_ORCHID = 33;
+const SEAGRASS = 34;
+const SEA_LANTERN = 35;
 
-// Biomes
+// Biome IDs
 const B_OCEAN = 0;
 const B_BEACH = 1;
-const B_PLAIN = 2;
+const B_PLAINS = 2;
 const B_FOREST = 3;
 const B_DESERT = 4;
 const B_SNOWY = 5;
 const B_MOUNTAIN = 6;
+const B_JUNGLE = 7;
+const B_SAVANNA = 8;
+const B_MESA = 9;
+const B_RIVER = 10;
 
 const noise = new SimplexNoise(${seed});
 
+// Large offset to avoid 0,0 symmetry/bias in noise functions
+const NOISE_OFFSET = 10000;
+
 const getIndex = (x, y, z) => (x * WORLD_HEIGHT + y) * CHUNK_SIZE + z;
 
+// Smooth curve function for mountains
+function easeInQuart(x) {
+    return x * x * x * x;
+}
+
+function smoothstep(min, max, value) {
+    const x = Math.max(0, Math.min(1, (value - min) / (max - min)));
+    return x * x * (3 - 2 * x);
+}
+
 function getTerrainInfo(wx, wz) {
-    const continentalness = noise.fbm(wx * 0.002, wz * 0.002, 2); 
-    const erosion = Math.abs(noise.fbm(wx * 0.005, wz * 0.005, 2));
-    const pv = noise.noise2D(wx * 0.03, wz * 0.03);
-    const temperature = noise.fbm(wx * 0.002, wz * 0.002, 2); 
-    const humidity = noise.fbm((wx + 500) * 0.002, (wz + 500) * 0.002, 2); 
+    // Offset input coordinates
+    const nx = wx + NOISE_OFFSET;
+    const nz = wz + NOISE_OFFSET;
 
-    let h = WATER_LEVEL;
-    h += continentalness * 40;
-
-    const mountainBase = Math.max(0, continentalness + 0.1); 
-    const mountainFactor = erosion * erosion * erosion; 
+    // 1. Continentalness: Determines Land vs Ocean
+    const continentalness = noise.fbm(nx * 0.001, nz * 0.001, 2); 
     
-    h += mountainBase * mountainFactor * 100;
-    h += pv * 3;
+    // 2. Erosion: Determines Flatness vs Roughness
+    const erosion = noise.fbm(nx * 0.002, nz * 0.002, 2);
 
+    // 3. Temperature & Humidity for Biomes
+    const temperature = noise.fbm(nx * 0.0015, nz * 0.0015, 2); 
+    const humidity = noise.fbm((nx + 5000) * 0.0015, (nz + 5000) * 0.0015, 2); 
+
+    // 4. River Noise: 0 at rivers, 1 far away
+    const riverNoise = Math.abs(noise.noise2D(nx * 0.0025, nz * 0.0025));
+    const isRiver = riverNoise < 0.06;
+
+    // Base Height Calculation
+    const coastThreshold = -0.2;
+    
+    // Unified S-Curve for continental shelf to avoid cliffs
+    const steepness = 4.0; 
+    const shelfShape = Math.tanh((continentalness - coastThreshold) * steepness);
+    
+    let h = WATER_LEVEL + (shelfShape * 40); 
+
+    // Apply Surface Noise (Erosion)
+    const landFactor = smoothstep(-0.4, 0.0, continentalness);
+    const pv = noise.fbm(nx * 0.01, nz * 0.01, 3);
+    h += pv * 5;
+
+    // Ocean Floor Detail
+    if (h < WATER_LEVEL) {
+        const seabedDetail = noise.noise2D(nx * 0.03, nz * 0.03);
+        h += seabedDetail * 3;
+    }
+
+    // Big Mountains
+    if (erosion > 0.3) {
+        const mountainHeight = easeInQuart((erosion - 0.3) * 2.5);
+        h += mountainHeight * 80 * landFactor;
+    }
+
+    // Carve Rivers
+    if (isRiver && h > WATER_LEVEL) {
+        // Smooth interpolation to river bed
+        const depth = (0.06 - riverNoise) / 0.06; // 0 to 1
+        h = h * (1 - depth) + (WATER_LEVEL - 2) * depth;
+    }
+
+    // Clamp
     const height = Math.floor(Math.max(2, Math.min(WORLD_HEIGHT - 3, h)));
 
-    let biome = B_PLAIN;
-    if (height < WATER_LEVEL - 2) {
+    // Biome Determination
+    let biome = B_PLAINS;
+
+    if (height <= WATER_LEVEL) {
         biome = B_OCEAN;
-    } else if (height <= WATER_LEVEL + 1) {
-        if (temperature > 0.5) biome = B_DESERT;
-        else biome = B_BEACH;
-    } else if (height > 85) {
-        if (temperature > 0.5) biome = B_MOUNTAIN;
-        else biome = B_SNOWY;
+        if (isRiver) biome = B_RIVER;
+    } else if (height <= WATER_LEVEL + 2) {
+         if (temperature > 0.5) biome = B_DESERT;
+         else if (temperature > 0.0) biome = B_BEACH;
+         else biome = B_SNOWY; // Frozen beach
+    } else if (height > 95 && temperature < 0.5) {
+        biome = B_MOUNTAIN;
     } else {
-        if (temperature > 0.4) {
-            if (humidity < -0.2) biome = B_DESERT;
-            else biome = B_FOREST;
-        } else if (temperature < -0.3) {
-            biome = B_SNOWY;
+        // Land Biomes Table
+        if (temperature > 0.6) {
+            // HOT
+            if (humidity > 0.4) biome = B_JUNGLE;
+            else if (humidity > -0.2) biome = B_SAVANNA;
+            else if (humidity > -0.6) biome = B_MESA;
+            else biome = B_DESERT;
+        } else if (temperature > 0.0) {
+            // TEMPERATE
+            if (humidity > 0.2) biome = B_FOREST;
+            else if (humidity > -0.5) biome = B_PLAINS;
+            else biome = B_SAVANNA; // Dry plains
         } else {
-            if (humidity > 0.1) biome = B_FOREST;
-            else biome = B_PLAIN;
+            // COLD
+            biome = B_SNOWY;
         }
     }
-    return { h: height, biome };
+
+    return { h: height, biome, isRiver };
 }
 
 self.onmessage = function(e) {
@@ -174,7 +251,7 @@ self.onmessage = function(e) {
     const chunkBuffer = new Uint8Array(CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE);
     const heightMap = new Int32Array(CHUNK_SIZE * CHUNK_SIZE);
     const biomeMap = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
-    const trees = []; // Store tree instances {x, y, z, type}
+    const trees = []; // Store tree instances
     
     chunkBuffer.fill(AIR);
     let totalHeight = 0;
@@ -203,25 +280,44 @@ self.onmessage = function(e) {
 
                 if (y <= groundHeight) {
                     let block = STONE;
+                    
+                    // Surface Blocks
                     if (y === groundHeight) {
                          switch(biome) {
                             case B_OCEAN: block = SAND; break;
                             case B_BEACH: block = SAND; break;
                             case B_DESERT: block = SAND; break;
                             case B_SNOWY: block = SNOW; break;
-                            case B_MOUNTAIN: block = STONE; break;
+                            case B_MOUNTAIN: block = SNOW; break; // Snow caps
                             case B_FOREST: block = GRASS; break;
+                            case B_JUNGLE: block = GRASS; break;
+                            case B_SAVANNA: block = DIRT; break; 
+                            case B_MESA: block = RED_SAND; break;
+                            case B_RIVER: block = SAND; break;
                             default: block = GRASS; break;
                         }
-                    } else if (y > groundHeight - 4) {
-                        if (biome === B_DESERT || biome === B_BEACH) block = (biome === B_DESERT) ? SANDSTONE : SAND;
-                        else if (biome === B_SNOWY) block = STONE;
+                    } 
+                    // Subsurface (Dirt/Sand layers)
+                    else if (y > groundHeight - 4) {
+                        if (biome === B_DESERT || biome === B_BEACH) block = SANDSTONE;
+                        else if (biome === B_MESA) block = RED_SANDSTONE;
+                        else if (biome === B_SNOWY || biome === B_MOUNTAIN) block = STONE;
                         else block = DIRT;
                     }
+                    // Deep layers (Mesa Banding)
+                    else if (biome === B_MESA && y > WATER_LEVEL) {
+                        // Terracotta banding effect
+                        // Offset noise here too for consistency
+                        const band = (y + Math.floor(noise.noise2D((wx+NOISE_OFFSET)*0.05, (wz+NOISE_OFFSET)*0.05)*3)) % 9;
+                        if (band === 0 || band === 1) block = RED_SANDSTONE; // darker
+                        else if (band === 4) block = DIRT; // brown band
+                        else block = RED_SAND; // normal red sand
+                    }
 
+                    // Caves
                     if (y < groundHeight - 4 && y > 4) {
-                         const cave = noise.noise2D(wx * 0.05, y * 0.05) + noise.noise2D(wz * 0.05, y * 0.05);
-                         if (cave > 1.4) block = AIR;
+                         const cave = noise.noise2D((wx+NOISE_OFFSET) * 0.06, y * 0.06) + noise.noise2D((wz+NOISE_OFFSET) * 0.06, y * 0.06);
+                         if (cave > 1.3) block = AIR;
                     }
 
                     if (block !== AIR) chunkBuffer[idx] = block;
@@ -237,65 +333,86 @@ self.onmessage = function(e) {
             const idx = getIndex(x, y, z);
             const current = chunkBuffer[idx];
             
-            if (block === LEAVES || block === BIRCH_LEAVES || block === SPRUCE_LEAVES) {
-                 if (current === AIR) chunkBuffer[idx] = block;
-            } else {
-                if (current !== BEDROCK) chunkBuffer[idx] = block;
+            // Don't overwrite solid blocks with leaves/logs usually, but we want trees to pierce other trees
+            if (current === AIR || current === WATER || current === TALL_GRASS || current >= FLOWER_YELLOW) {
+                chunkBuffer[idx] = block;
             }
         }
     }
 
     function placeTree(x, y, z, type) {
-        let h = 5;
-        let log = LOG;
-        let leaves = LEAVES;
         let typeIdx = 0; // OAK
+        
+        if (type === 'BIRCH') typeIdx = 1;
+        if (type === 'SPRUCE') typeIdx = 2;
+        if (type === 'JUNGLE') typeIdx = 3;
+        if (type === 'ACACIA') typeIdx = 4;
 
-        if (type === 'BIRCH') { h = 6; log = BIRCH_LOG; leaves = BIRCH_LEAVES; typeIdx = 1; }
-        if (type === 'SPRUCE') { h = 7; log = SPRUCE_LOG; leaves = SPRUCE_LEAVES; typeIdx = 2; }
-
-        // Record tree instance if the root is within this chunk's bounds
+        // Record tree instance
         if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE) {
             trees.push({ x, y, z, type: typeIdx });
         }
 
-        for (let i = 0; i < h; i++) {
-            safeSetBlock(x, y + i, z, log);
-        }
-
-        if (type === 'SPRUCE') {
-             for(let i=2; i<h; i++) {
-                 const r = Math.floor((h-i)*0.4) + 1;
-                 placeLeafLayer(x, y+i, z, r, leaves);
-             }
-             placeLeafLayer(x, y+h, z, 1, leaves);
-        } else {
+        if (type === 'OAK' || type === 'BIRCH') {
+            const h = type === 'BIRCH' ? 6 : 5;
+            const log = type === 'BIRCH' ? BIRCH_LOG : LOG;
+            const leaves = type === 'BIRCH' ? BIRCH_LEAVES : LEAVES;
+            for (let i = 0; i < h; i++) safeSetBlock(x, y + i, z, log);
             placeLeafLayer(x, y+h-2, z, 2, leaves);
             placeLeafLayer(x, y+h-1, z, 2, leaves);
             placeLeafLayer(x, y+h, z, 1, leaves);
             placeLeafLayer(x, y+h+1, z, 1, leaves);
+        } 
+        else if (type === 'SPRUCE') {
+             const h = 7;
+             for(let i=0; i<h; i++) safeSetBlock(x, y + i, z, SPRUCE_LOG);
+             for(let i=2; i<h; i++) {
+                 const r = Math.floor((h-i)*0.4) + 1;
+                 placeLeafLayer(x, y+i, z, r, SPRUCE_LEAVES);
+             }
+             placeLeafLayer(x, y+h, z, 1, SPRUCE_LEAVES);
+        }
+        else if (type === 'JUNGLE') {
+            const h = 10 + Math.floor(Math.random() * 5);
+            for (let i = 0; i < h; i++) safeSetBlock(x, y + i, z, JUNGLE_LOG);
+            placeLeafLayer(x, y+h-2, z, 3, JUNGLE_LEAVES);
+            placeLeafLayer(x, y+h-1, z, 3, JUNGLE_LEAVES);
+            placeLeafLayer(x, y+h, z, 2, JUNGLE_LEAVES);
+            safeSetBlock(x, y+h, z, JUNGLE_LOG); // Top log
+        }
+        else if (type === 'ACACIA') {
+            const h = 5 + Math.floor(Math.random() * 2);
+            for (let i = 0; i < h; i++) safeSetBlock(x, y + i, z, ACACIA_LOG);
+            
+            safeSetBlock(x+1, y+h-1, z, ACACIA_LOG);
+            safeSetBlock(x+2, y+h, z, ACACIA_LOG);
+            placeLeafLayer(x+2, y+h+1, z, 2, ACACIA_LEAVES);
+
+            safeSetBlock(x-1, y+h-2, z, ACACIA_LOG);
+            safeSetBlock(x-2, y+h-1, z, ACACIA_LOG);
+            placeLeafLayer(x-2, y+h, z, 2, ACACIA_LEAVES);
         }
     }
 
     function placeLeafLayer(cx, cy, cz, r, type) {
         for (let i = -r; i <= r; i++) {
             for (let j = -r; j <= r; j++) {
-                if (Math.abs(i) === r && Math.abs(j) === r && r > 1) continue; 
+                if (Math.abs(i) === r && Math.abs(j) === r && r > 1) {
+                     if (Math.random() > 0.5) continue; // corner rounding
+                }
                 safeSetBlock(cx + i, cy, cz + j, type);
             }
         }
     }
 
-    // 2. Tree Pass (Extended Bounds)
-    const TREE_MARGIN = 3;
+    // 2. Tree & Decoration Pass
+    const TREE_MARGIN = 4;
     for (let x = -TREE_MARGIN; x < CHUNK_SIZE + TREE_MARGIN; x++) {
         for (let z = -TREE_MARGIN; z < CHUNK_SIZE + TREE_MARGIN; z++) {
             const wx = worldX + x;
             const wz = worldZ + z;
             
             let h, biome;
-            
-            // Use cached data if available
             if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE) {
                 h = heightMap[x * CHUNK_SIZE + z];
                 biome = biomeMap[x * CHUNK_SIZE + z];
@@ -304,81 +421,85 @@ self.onmessage = function(e) {
                 h = info.h;
                 biome = info.biome;
             }
-
-            if (h <= WATER_LEVEL || h >= WORLD_HEIGHT - 8) continue;
-
-            // Valid surface check (approximate for neighbors based on biome)
-            let validSurface = (biome === B_PLAIN || biome === B_FOREST || biome === B_SNOWY);
-            if (!validSurface) continue;
-
+            
             const r = hash(wx, wz); 
+
+            // --- UNDERWATER DECORATION ---
+            if (h < WATER_LEVEL - 1 && biome === B_OCEAN) {
+                // Seagrass
+                 if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE) {
+                     if (r > 0.8) {
+                         safeSetBlock(x, h+1, z, SEAGRASS);
+                     }
+                     // Rare Sea Lanterns in deep water
+                     if (h < WATER_LEVEL - 15 && r > 0.99) {
+                         safeSetBlock(x, h+1, z, SEA_LANTERN);
+                     }
+                     // Gravel patches
+                     if (r < 0.1) {
+                         safeSetBlock(x, h, z, GRAVEL);
+                     }
+                 }
+                 continue; // Skip trees if underwater
+            }
+
+            if (h <= WATER_LEVEL || h >= WORLD_HEIGHT - 15) continue;
+
+            // --- TREES ---
             let treeType = null;
             let treeChance = 0;
 
-            if (biome === B_FOREST) { treeChance = 0.05; treeType = 'OAK'; if (r > 0.6) treeType = 'BIRCH'; }
-            else if (biome === B_PLAIN) { treeChance = 0.003; treeType = 'OAK'; }
+            if (biome === B_FOREST) { treeChance = 0.08; treeType = 'OAK'; if (r > 0.7) treeType = 'BIRCH'; }
+            else if (biome === B_PLAINS) { treeChance = 0.002; treeType = 'OAK'; }
             else if (biome === B_SNOWY) { treeChance = 0.02; treeType = 'SPRUCE'; }
+            else if (biome === B_MOUNTAIN) { treeChance = 0.01; treeType = 'SPRUCE'; }
+            else if (biome === B_JUNGLE) { treeChance = 0.15; treeType = 'JUNGLE'; }
+            else if (biome === B_SAVANNA) { treeChance = 0.005; treeType = 'ACACIA'; }
 
             if (r < treeChance && treeType) {
                 placeTree(x, h + 1, z, treeType);
-            } 
-        }
-    }
+            }
 
-    // 3. Small Vegetation Pass (Internal Only)
-    for (let x = 0; x < CHUNK_SIZE; x++) {
-        for (let z = 0; z < CHUNK_SIZE; z++) {
-            const wx = worldX + x;
-            const wz = worldZ + z;
-            const h = heightMap[x * CHUNK_SIZE + z];
-            const biome = biomeMap[x * CHUNK_SIZE + z];
-            
-            if (h <= WATER_LEVEL || h >= WORLD_HEIGHT - 8) continue;
-            
-            const idxSurface = getIndex(x, h, z);
-            const surface = chunkBuffer[idxSurface];
-            
-            if (surface === AIR || surface === WATER || surface === BEDROCK) continue;
+            // --- LAND DECORATIONS ---
+            if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE) {
+                 const idxAbove = getIndex(x, h + 1, z);
+                 if (chunkBuffer[idxAbove] !== AIR) continue;
 
-            const r = hash(wx, wz); 
-
-            if (surface === GRASS || surface === SNOW || surface === DIRT) {
-                 if (r < 0.2 && chunkBuffer[getIndex(x, h + 1, z)] === AIR) {
-                     const idxAbove = getIndex(x, h + 1, z);
-                     if (biome === B_FOREST || biome === B_PLAIN) {
-                         if (r < 0.02) chunkBuffer[idxAbove] = FLOWER_YELLOW;
-                         else if (r < 0.04) chunkBuffer[idxAbove] = FLOWER_RED;
-                         else if (r < 0.05) chunkBuffer[idxAbove] = TULIP_PINK;
-                         else if (r < 0.10) chunkBuffer[idxAbove] = TALL_GRASS;
+                 // Cactus
+                 if (biome === B_DESERT || biome === B_MESA) {
+                     if (r > 0.98) {
+                         const ch = 2 + Math.floor(r * 100) % 3;
+                         for(let k=0; k<ch; k++) safeSetBlock(x, h+1+k, z, CACTUS);
+                     } else if (r > 0.95) {
+                         safeSetBlock(x, h+1, z, DEAD_BUSH);
                      }
-                }
-            }
-            else if (surface === SAND && biome === B_DESERT) {
-                if (r < 0.01) {
-                    const ch = 2 + Math.floor(r * 100) % 3;
-                    for(let k=0; k<ch; k++) {
-                        if (h+1+k < WORLD_HEIGHT) chunkBuffer[getIndex(x, h+1+k, z)] = CACTUS;
-                    }
-                } else if (r < 0.04) {
-                    if (h+1 < WORLD_HEIGHT) chunkBuffer[getIndex(x, h+1, z)] = DEAD_BUSH;
-                }
+                 }
+                 // Jungle Melons
+                 else if (biome === B_JUNGLE) {
+                     if (r > 0.99) safeSetBlock(x, h+1, z, MELON);
+                     else if (r > 0.98) safeSetBlock(x, h+1, z, BLUE_ORCHID);
+                     else if (r > 0.7) safeSetBlock(x, h+1, z, TALL_GRASS); // Dense grass
+                 }
+                 // Flowers
+                 else if (biome === B_FOREST || biome === B_PLAINS) {
+                     if (r > 0.90) {
+                         if (r > 0.98) safeSetBlock(x, h+1, z, TULIP_RED);
+                         else if (r > 0.96) safeSetBlock(x, h+1, z, TULIP_ORANGE);
+                         else if (r > 0.94) safeSetBlock(x, h+1, z, FLOWER_YELLOW);
+                         else if (r > 0.92) safeSetBlock(x, h+1, z, TALL_GRASS);
+                     }
+                 }
             }
         }
     }
 
-    let maxC = 0;
     let domB = 'plain';
-    for(const [b, c] of Object.entries(biomeCounts)) {
-        if (c > maxC) {
-            maxC = c;
-            const bi = parseInt(b);
-            if (bi === B_OCEAN) domB = 'ocean';
-            else if (bi === B_DESERT) domB = 'desert';
-            else if (bi === B_SNOWY) domB = 'mountain'; 
-            else if (bi === B_MOUNTAIN) domB = 'mountain';
-            else if (bi === B_FOREST) domB = 'forest';
-        }
-    }
+    if (biomeCounts[B_OCEAN] > 50) domB = 'ocean';
+    else if (biomeCounts[B_DESERT] > 50) domB = 'desert';
+    else if (biomeCounts[B_MESA] > 50) domB = 'desert'; 
+    else if (biomeCounts[B_SNOWY] > 50) domB = 'mountain';
+    else if (biomeCounts[B_FOREST] > 50) domB = 'forest';
+    else if (biomeCounts[B_JUNGLE] > 50) domB = 'forest';
 
     const avgH = Math.floor(totalHeight / (CHUNK_SIZE * CHUNK_SIZE));
 
@@ -407,7 +528,6 @@ export class ChunkLoader {
     this.worker.onmessage = (e: MessageEvent) => {
        const chunk = e.data as ChunkData;
        // Ensure data is typed correctly from worker transfer
-       // When transferred, it arrives as Uint8Array if typed array was transferred
        chunk.data = new Uint8Array(chunk.data); 
        this.onChunkLoaded(chunk);
     };

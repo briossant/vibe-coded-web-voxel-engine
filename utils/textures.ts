@@ -2,8 +2,8 @@
 import * as THREE from 'three';
 import { BlockType } from '../types';
 
-// Texture Atlas: 16x16 pixels, 32 tiles wide
-export const TEXTURE_ATLAS_SIZE = 32;
+// Texture Atlas: 16x16 pixels, 64 tiles wide (Expanded size)
+export const TEXTURE_ATLAS_SIZE = 64;
 const TILE_SIZE = 16;
 
 const createAtlas = () => {
@@ -66,7 +66,7 @@ const createAtlas = () => {
   ctx.fillStyle = 'rgba(255,255,255,0.3)';
   ctx.fillRect(6*TILE_SIZE + 2, 2, 4, 2);
   // 7: Sand
-  fill(7, '#FFEB3B');
+  fill(7, '#fbc02d');
   // 8: Bedrock
   fill(8, '#212121');
   // 9: Snow
@@ -121,7 +121,7 @@ const createAtlas = () => {
   ctx.fillRect(x18 + 13, 3, 1, 5);
 
   // 19: Sandstone
-  fill(19, '#FFCC80', true);
+  fill(19, '#ffcc80', true);
   ctx.fillStyle = '#E65100';
   ctx.fillRect(19*TILE_SIZE, 14, 16, 2); // bottom stripe
 
@@ -162,6 +162,75 @@ const createAtlas = () => {
   // 30: Stone
   fill(30, '#757575');
 
+  // 31: Acacia Log Side
+  fill(31, '#6D4C41'); // Grayish brown
+  ctx.fillStyle = '#3E2723';
+  ctx.fillRect(31*TILE_SIZE + 2, 0, 10, 16); // Stripped bark effect
+  ctx.fillStyle = '#8D6E63';
+  ctx.fillRect(31*TILE_SIZE + 4, 2, 2, 12);
+
+  // 32: Acacia Leaves
+  fill(32, '#7CB342', true);
+
+  // 33: Acacia Top
+  fill(33, '#6D4C41', false);
+  ctx.fillStyle = '#FF7043'; // Orange core
+  ctx.fillRect(33*TILE_SIZE+3,3,10,10);
+
+  // 34: Jungle Log Side
+  fill(34, '#5D4037');
+  ctx.fillStyle = '#3E2723'; // Horizontal texture
+  for(let i=0; i<6; i++) ctx.fillRect(34*TILE_SIZE, i*3, 16, 1);
+
+  // 35: Jungle Leaves
+  fill(35, '#1B5E20', true);
+  ctx.fillStyle = '#33691E'; // Berries
+  for(let i=0;i<5;i++) ctx.fillRect(35*TILE_SIZE+Math.random()*14,Math.random()*14,2,2);
+
+  // 36: Jungle Top
+  fill(36, '#5D4037', false);
+  ctx.fillStyle = '#8D6E63';
+  ctx.fillRect(36*TILE_SIZE+2,2,12,12);
+
+  // 37: Red Sand
+  fill(37, '#D84315', true);
+
+  // 38: Red Sandstone
+  fill(38, '#BF360C');
+  ctx.fillStyle = '#D84315';
+  ctx.fillRect(38*TILE_SIZE, 0, 16, 4);
+  ctx.fillStyle = '#8D6E63';
+  ctx.fillRect(38*TILE_SIZE, 8, 16, 2);
+
+  // 39: Melon Side
+  fill(39, '#388E3C'); // Green
+  ctx.fillStyle = '#1B5E20'; // Stripes
+  ctx.fillRect(39*TILE_SIZE+4, 0, 2, 16);
+  ctx.fillRect(39*TILE_SIZE+10, 0, 2, 16);
+
+  // 40: Melon Top
+  fill(40, '#388E3C');
+  ctx.fillStyle = '#1B5E20';
+  ctx.fillRect(40*TILE_SIZE+7, 7, 2, 2); // Stem connector
+
+  // 41: Blue Orchid
+  flower(41, '#2E7D32', '#00BCD4', '#E0F7FA');
+
+  // 42: Seagrass
+  const x42 = 42 * TILE_SIZE;
+  ctx.clearRect(x42, 0, TILE_SIZE, TILE_SIZE);
+  ctx.fillStyle = '#4CAF50'; // Brighter green for underwater
+  ctx.fillRect(x42 + 4, 4, 2, 12);
+  ctx.fillRect(x42 + 8, 2, 2, 14);
+  ctx.fillRect(x42 + 12, 5, 2, 11);
+
+  // 43: Sea Lantern
+  fill(43, '#E0F7FA', false);
+  ctx.fillStyle = '#00BCD4'; // Cyan border/inset
+  ctx.fillRect(43*TILE_SIZE + 2, 2, 12, 12);
+  ctx.fillStyle = '#FFFFFF'; // Bright center
+  ctx.fillRect(43*TILE_SIZE + 5, 5, 6, 6);
+
   const tex = new THREE.CanvasTexture(canvas);
   tex.minFilter = THREE.NearestFilter;
   tex.magFilter = THREE.NearestFilter;
@@ -201,6 +270,18 @@ export const getUVOffset = (type: BlockType, normal: number[]): [number, number]
        case BlockType.TULIP_WHITE: idx = 23; break;
        case BlockType.TULIP_PINK: idx = 24; break;
        case BlockType.CORNFLOWER: idx = 25; break;
+       
+       case BlockType.ACACIA_LOG: idx = (ny > 0.5 || ny < -0.5) ? 33 : 31; break;
+       case BlockType.ACACIA_LEAVES: idx = 32; break;
+       case BlockType.JUNGLE_LOG: idx = (ny > 0.5 || ny < -0.5) ? 36 : 34; break;
+       case BlockType.JUNGLE_LEAVES: idx = 35; break;
+       case BlockType.RED_SAND: idx = 37; break;
+       case BlockType.RED_SANDSTONE: idx = 38; break;
+       case BlockType.MELON: idx = (ny > 0.5 || ny < -0.5) ? 40 : 39; break;
+       case BlockType.BLUE_ORCHID: idx = 41; break;
+       case BlockType.SEAGRASS: idx = 42; break;
+       case BlockType.SEA_LANTERN: idx = 43; break;
+
        default: idx = 0;
    }
    

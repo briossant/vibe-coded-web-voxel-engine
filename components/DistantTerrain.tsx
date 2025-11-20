@@ -2,7 +2,7 @@
 import React, { useLayoutEffect, useRef, useMemo } from 'react';
 import * as THREE from 'three';
 import { ChunkData } from '../types';
-import { CHUNK_SIZE } from '../constants';
+import { CHUNK_SIZE, WATER_LEVEL } from '../constants';
 
 const COLORS = {
     WATER: new THREE.Color('#0288d1'),
@@ -18,6 +18,9 @@ const COLORS = {
     TREE_SPRUCE: new THREE.Color('#1B5E20'),
 };
 
+// Match ChunkMesh water offset
+const WATER_HEIGHT_OFFSET = 0.875;
+
 interface DistantTerrainProps {
   chunks: ChunkData[];
 }
@@ -27,14 +30,25 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
   const waterMeshRef = useRef<THREE.InstancedMesh>(null);
   const treeMeshRef = useRef<THREE.InstancedMesh>(null);
 
+  // Create a plane geometry for water to only show the top face
+  const waterGeometry = useMemo(() => {
+      const geo = new THREE.PlaneGeometry(1, 1);
+      geo.rotateX(-Math.PI / 2);
+      return geo;
+  }, []);
+
   const { landChunks, waterChunks, totalTrees } = useMemo(() => {
       const land: ChunkData[] = [];
       const water: ChunkData[] = [];
       let treeCount = 0;
       
       chunks.forEach(c => {
-          if (c.biome === 'ocean') water.push(c);
-          else land.push(c);
+          if (c.biome === 'ocean' || c.biome === 'river') {
+              water.push(c);
+          }
+          
+          // Always render land for all chunks (seabed or ground)
+          land.push(c);
           
           if (c.trees) {
               treeCount += c.trees.length;
@@ -56,15 +70,17 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
     for (let i = 0; i < count; i++) {
       const chunk = landChunks[i];
       
-      dummy.scale.set(CHUNK_SIZE, chunk.averageHeight, CHUNK_SIZE);
+      // Scale height to average height
+      dummy.scale.set(CHUNK_SIZE, Math.max(1, chunk.averageHeight), CHUNK_SIZE);
       dummy.position.set(
         chunk.x * CHUNK_SIZE + CHUNK_SIZE / 2, 
-        chunk.averageHeight / 2, 
+        Math.max(1, chunk.averageHeight) / 2, 
         chunk.z * CHUNK_SIZE + CHUNK_SIZE / 2
       );
       dummy.updateMatrix();
       landMeshRef.current.setMatrixAt(i, dummy.matrix);
 
+      // Determine Color
       if (chunk.biome === 'desert') color.copy(COLORS.SAND);
       else if (chunk.biome === 'mountain') {
            if (chunk.averageHeight > 90) color.copy(COLORS.SNOW);
@@ -72,6 +88,7 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
       }
       else if (chunk.biome === 'forest') color.copy(COLORS.FOREST);
       else if (chunk.biome === 'flower_hill') color.copy(COLORS.FLOWER);
+      else if (chunk.biome === 'ocean') color.copy(COLORS.SAND); // Seabed is sand
       else color.copy(COLORS.GRASS); // Plain
 
       landMeshRef.current.setColorAt(i, color);
@@ -92,11 +109,17 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
 
     for (let i = 0; i < count; i++) {
       const chunk = waterChunks[i];
-      const h = chunk.averageHeight; 
-      dummy.scale.set(CHUNK_SIZE, h, CHUNK_SIZE);
+      
+      // Calculate precise water surface height
+      // WATER_LEVEL is the index of the top water block.
+      // The visual surface is at index + WATER_HEIGHT_OFFSET.
+      const surfaceY = WATER_LEVEL + WATER_HEIGHT_OFFSET;
+      
+      // Flatten scale Y to 1 since it is a plane
+      dummy.scale.set(CHUNK_SIZE, 1, CHUNK_SIZE);
       dummy.position.set(
         chunk.x * CHUNK_SIZE + CHUNK_SIZE / 2, 
-        h / 2, 
+        surfaceY, 
         chunk.z * CHUNK_SIZE + CHUNK_SIZE / 2
       );
       dummy.updateMatrix();
@@ -117,7 +140,6 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
       const color = new THREE.Color();
       let idx = 0;
 
-      // Iterate through all chunks (land + water) just in case a tree is on an island in ocean chunk
       for (const chunk of chunks) {
           if (!chunk.trees) continue;
           
@@ -125,16 +147,12 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
           const startZ = chunk.z * CHUNK_SIZE;
 
           for (const tree of chunk.trees) {
-              // tree.x/z are local to chunk (0-15)
               const wx = startX + tree.x;
               const wy = tree.y;
               const wz = startZ + tree.z;
 
-              // Simple tree representation
-              // Oak/Birch: 5-6 high. Spruce: 7 high.
-              // We'll just use a box approx 5 units high, 1 unit wide
               let height = 5;
-              let width = 1.2; // Slightly thicker for visibility at distance
+              let width = 1.2;
               
               if (tree.type === 2) { // Spruce
                   height = 7;
@@ -162,6 +180,7 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
 
   return (
     <>
+        {/* Land/Seabed Layer */}
         <instancedMesh 
         ref={landMeshRef} 
         args={[undefined, undefined, landChunks.length]}
@@ -171,20 +190,23 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
             <meshStandardMaterial roughness={1} metalness={0} />
         </instancedMesh>
 
+        {/* Water Layer - Uses PlaneGeometry via prop to only show top face */}
         <instancedMesh 
         ref={waterMeshRef} 
         args={[undefined, undefined, waterChunks.length]}
+        geometry={waterGeometry}
         frustumCulled={false}
         >
-            <boxGeometry args={[1, 1, 1]} />
             <meshStandardMaterial 
                 roughness={0.1} 
                 metalness={0.1} 
                 transparent={true} 
                 opacity={0.6}
+                side={THREE.DoubleSide} // Plane is single sided by default, ensure it is visible from below if diving
             />
         </instancedMesh>
 
+        {/* Trees */}
         <instancedMesh
           ref={treeMeshRef}
           args={[undefined, undefined, totalTrees]}

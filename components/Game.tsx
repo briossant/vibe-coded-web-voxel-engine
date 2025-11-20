@@ -16,37 +16,39 @@ interface GameProps {
   setChunks: React.Dispatch<React.SetStateAction<Map<string, ChunkData>>>;
 }
 
-const GameScene: React.FC<GameProps> = ({ gameState, setChunks }) => {
+interface GameSceneProps {
+  gameState: GameState & { setIsUnderwater: (val: boolean) => void };
+  setChunks: React.Dispatch<React.SetStateAction<Map<string, ChunkData>>>;
+}
+
+const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
   const [playerPos, setPlayerPos] = useState<Vector3>(() => {
      const safeY = getTerrainHeight(0, 0) + 10;
      return [0, safeY, 0];
   });
+
+  // New state for underwater effect
+  const [isUnderwater, setIsUnderwater] = useState(false);
   
   const loaderRef = useRef<ChunkLoader | null>(null);
-  // Track requested chunks to prevent worker flooding
   const pendingChunks = useRef<Set<string>>(new Set());
   
   const spiralRef = useRef({ x: 0, y: 0, dx: 0, dy: -1 });
   const chunkScanRef = useRef<{ cx: number, cz: number, index: number }>({ cx: 0, cz: 0, index: 0 });
 
-  // References for Dynamic Lighting
   const lightRef = useRef<THREE.DirectionalLight>(null);
   const lightTarget = useMemo(() => new THREE.Object3D(), []);
 
-  // Move light with camera to ensure shadows follow player (fixes shadows only at origin)
   useFrame(({ camera }) => {
       if (lightRef.current) {
           const cx = camera.position.x;
           const cz = camera.position.z;
-          
-          // Position light relative to camera to simulate sun direction [100, 40, 100]
           lightRef.current.position.set(cx + 50, 120, cz + 50);
           lightRef.current.target.position.set(cx, 0, cz);
           lightRef.current.target.updateMatrixWorld();
       }
   });
 
-  // Initialize Worker with current Seed
   useEffect(() => {
     loaderRef.current = new ChunkLoader(gameState.seed, (chunk) => {
         setChunks(prev => new Map(prev).set(chunk.id, chunk));
@@ -55,7 +57,6 @@ const GameScene: React.FC<GameProps> = ({ gameState, setChunks }) => {
     return () => loaderRef.current?.terminate();
   }, [setChunks, gameState.seed]);
 
-  // --- SPIRAL CHUNK LOADING ---
   useFrame(() => {
       if (!loaderRef.current) return;
 
@@ -108,7 +109,6 @@ const GameScene: React.FC<GameProps> = ({ gameState, setChunks }) => {
       spiralRef.current = { x, y, dx, dy };
   });
 
-  // Cleanup distant chunks
   useEffect(() => {
      const interval = setInterval(() => {
         const [px, , pz] = playerPos;
@@ -140,10 +140,6 @@ const GameScene: React.FC<GameProps> = ({ gameState, setChunks }) => {
      return () => clearInterval(interval);
   }, [playerPos, gameState.renderDistance, setChunks]);
 
-  // --- LOD CASCADE ---
-  // Optimization: Calculate chunk coordinates from playerPos
-  // This ensures we only re-calculate LOD lists when player actually enters a new chunk,
-  // stabilizing the 'highDetailChunks' array reference for sub-block movements.
   const playerChunkX = Math.floor(playerPos[0] / CHUNK_SIZE);
   const playerChunkZ = Math.floor(playerPos[2] / CHUNK_SIZE);
 
@@ -151,7 +147,6 @@ const GameScene: React.FC<GameProps> = ({ gameState, setChunks }) => {
       const high: {chunk: ChunkData, lod: number}[] = [];
       const low: ChunkData[] = [];
       
-      // Use chunk coordinates for LOD calculation
       const cx = playerChunkX;
       const cz = playerChunkZ;
 
@@ -176,7 +171,6 @@ const GameScene: React.FC<GameProps> = ({ gameState, setChunks }) => {
       return { highDetailChunks: high, lowDetailChunks: low };
   }, [gameState.chunks, playerChunkX, playerChunkZ]);
 
-  // Helper to get chunks safely for neighbors
   const getChunk = useCallback((x: number, z: number) => gameState.chunks.get(`${x},${z}`), [gameState.chunks]);
 
   const getBlock = useCallback((x: number, y: number, z: number): BlockType => {
@@ -221,8 +215,6 @@ const GameScene: React.FC<GameProps> = ({ gameState, setChunks }) => {
      }
   }, [playerPos, gameState]);
 
-  const fogDensity = 2.5 / (gameState.renderDistance * CHUNK_SIZE);
-
   return (
     <>
       <color attach="background" args={['#87CEEB']} />
@@ -232,13 +224,13 @@ const GameScene: React.FC<GameProps> = ({ gameState, setChunks }) => {
         sunPosition={[100, 40, 100]} 
         inclination={0.6} 
         azimuth={0.25} 
-        rayleigh={2}
-        mieCoefficient={0.005}
-        mieDirectionalG={0.7}
-        turbidity={8}
+        rayleigh={isUnderwater ? 0.5 : 2} // Tweak sky if underwater?
       />
       <Stars radius={200} depth={50} count={5000} factor={4} fade />
-      <fogExp2 attach="fog" args={['#c6e6ff', fogDensity]} />
+      
+      {/* Fog adjustment for underwater */}
+      <fogExp2 attach="fog" args={[isUnderwater ? '#00334d' : '#c6e6ff', isUnderwater ? 0.08 : 2.5 / (gameState.renderDistance * CHUNK_SIZE)]} />
+      
       <hemisphereLight args={['#c6e6ff', '#5d4037', 0.5]} />
       <ambientLight intensity={0.3} />
       <primitive object={lightTarget} />
@@ -277,16 +269,21 @@ const GameScene: React.FC<GameProps> = ({ gameState, setChunks }) => {
         position={playerPos} 
         getBlock={getBlock}
         setBlock={setBlock}
-        onPositionChange={handlePosChange} 
+        onPositionChange={handlePosChange}
+        setIsUnderwater={gameState.setIsUnderwater} // Pass the callback from props
       />
     </>
   );
 };
 
-const Game: React.FC<GameProps> = ({ gameState, setChunks }) => {
-  return (
+// Game Wrapper to handle State Lifting for HUD
+const Game: React.FC<GameProps & { setIsUnderwater: (val: boolean) => void }> = ({ gameState, setChunks, setIsUnderwater }) => {
+    // We extend gameState in the wrapper to pass the setter down
+    const enhancedGameState = { ...gameState, setIsUnderwater };
+    
+    return (
     <Canvas shadows camera={{ fov: 70, near: 0.1, far: MAX_RENDER_DISTANCE * CHUNK_SIZE }}>
-      <GameScene gameState={gameState} setChunks={setChunks} />
+      <GameScene gameState={enhancedGameState} setChunks={setChunks} />
       {gameState.debugMode && <Stats />}
     </Canvas>
   );

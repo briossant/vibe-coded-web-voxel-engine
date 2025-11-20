@@ -33,6 +33,14 @@ export const TEXTURE_COLORS: Record<number, string> = {
   23: '#f5f5f5', // Tulip White
   24: '#e91e63', // Tulip Pink
   25: '#2196f3', // Cornflower
+  26: '#6D4C41', // Acacia Log
+  27: '#7CB342', // Acacia Leaves
+  28: '#5D4037', // Jungle Log
+  29: '#1B5E20', // Jungle Leaves
+  30: '#D84315', // Red Sand
+  31: '#BF360C', // Red Sandstone
+  32: '#388E3C', // Melon
+  33: '#00BCD4', // Blue Orchid
 };
 
 // Physics & Movement

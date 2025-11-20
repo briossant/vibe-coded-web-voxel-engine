@@ -27,6 +27,17 @@ export enum BlockType {
   TULIP_WHITE = 23,
   TULIP_PINK = 24,
   CORNFLOWER = 25,
+  // New Blocks
+  ACACIA_LOG = 26,
+  ACACIA_LEAVES = 27,
+  JUNGLE_LOG = 28,
+  JUNGLE_LEAVES = 29,
+  RED_SAND = 30,
+  RED_SANDSTONE = 31,
+  MELON = 32,
+  BLUE_ORCHID = 33,
+  SEAGRASS = 34,
+  SEA_LANTERN = 35,
 }
 
 export type Vector3 = [number, number, number];
@@ -40,7 +51,7 @@ export interface TreeInstance {
   x: number;
   y: number;
   z: number;
-  type: number; // 0: OAK, 1: BIRCH, 2: SPRUCE
+  type: number; // 0: OAK, 1: BIRCH, 2: SPRUCE, 3: JUNGLE, 4: ACACIA
 }
 
 export interface ChunkData {
