@@ -3,7 +3,8 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Sky, Stats, Stars } from '@react-three/drei';
 import * as THREE from 'three';
-import { Vector3, ChunkData, GameState, BlockType } from '../types';
+import { Vector3, ChunkData, GameState } from '../types';
+import { BlockType } from '../blocks';
 import { getBlockFromChunk, getTerrainHeight } from '../services/TerrainGenerator';
 import ChunkMesh from './ChunkMesh';
 import DistantTerrain from './DistantTerrain';
@@ -173,7 +174,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
 
   const getChunk = useCallback((x: number, z: number) => gameState.chunks.get(`${x},${z}`), [gameState.chunks]);
 
-  const getBlock = useCallback((x: number, y: number, z: number): BlockType => {
+  const getBlock = useCallback((x: number, y: number, z: number): number => {
     if (y < 0 || y >= WORLD_HEIGHT) return BlockType.AIR;
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
@@ -185,7 +186,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
     return getBlockFromChunk(chunk, lx, y, lz);
   }, [gameState.chunks]);
 
-  const setBlock = useCallback((x: number, y: number, z: number, type: BlockType) => {
+  const setBlock = useCallback((x: number, y: number, z: number, type: number) => {
      if (y < 0 || y >= WORLD_HEIGHT) return;
      const cx = Math.floor(x / CHUNK_SIZE);
      const cz = Math.floor(z / CHUNK_SIZE);

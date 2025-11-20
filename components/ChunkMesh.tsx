@@ -1,94 +1,67 @@
 
 import React, { useMemo } from 'react';
 import * as THREE from 'three';
-import { ChunkData, BlockType } from '../types';
+import { ChunkData } from '../types';
 import { CHUNK_SIZE, WORLD_HEIGHT } from '../constants';
 import { getBlockFromChunk } from '../services/TerrainGenerator';
 import { globalTexture, getUVOffset, TEXTURE_ATLAS_SIZE } from '../utils/textures';
+import { getBlockDef, BlockType } from '../blocks';
 
 interface ChunkMeshProps {
   chunk: ChunkData;
-  lodLevel: number; // 0 = Full, 1 = Surface+Skirts
+  lodLevel: number; 
   neighbors?: {
-      nx?: ChunkData; // x - 1
-      px?: ChunkData; // x + 1
-      nz?: ChunkData; // z - 1
-      pz?: ChunkData; // z + 1
+      nx?: ChunkData; px?: ChunkData; nz?: ChunkData; pz?: ChunkData;
   };
 }
 
-const isSprite = (type: BlockType) => {
-    return type === BlockType.TALL_GRASS || 
-           type === BlockType.FLOWER_YELLOW || 
-           type === BlockType.FLOWER_RED ||
-           type === BlockType.DEAD_BUSH ||
-           (type >= BlockType.TULIP_RED && type <= BlockType.CORNFLOWER) ||
-           type === BlockType.BLUE_ORCHID ||
-           type === BlockType.SEAGRASS;
+// Replaced local helpers with Registry lookups
+const isSprite = (type: number) => getBlockDef(type).isSprite;
+const isWater = (type: number) => getBlockDef(type).isFluid;
+const isWaterOrUnderwaterPlant = (type: number) => {
+    const def = getBlockDef(type);
+    return def.isFluid || (def.isSprite && type === BlockType.SEAGRASS); // Special case for seagrass
+};
+const isGround = (type: number) => {
+    const def = getBlockDef(type);
+    return def.isSolid && !def.isTransparent && !def.isFluid;
 };
 
-const isWater = (type: BlockType) => type === BlockType.WATER;
-// underwater plants are treated as "water" for mesh adjacency to avoid air pockets
-const isWaterOrUnderwaterPlant = (type: BlockType) => type === BlockType.WATER || type === BlockType.SEAGRASS;
-
-// Blocks that constitute "solid ground" for the heightmap
-const isGround = (type: BlockType) => {
-    return type === BlockType.DIRT || 
-           type === BlockType.GRASS || 
-           type === BlockType.STONE || 
-           type === BlockType.SAND || 
-           type === BlockType.BEDROCK || 
-           type === BlockType.SNOW || 
-           type === BlockType.SANDSTONE ||
-           type === BlockType.GRAVEL ||
-           type === BlockType.RED_SAND ||
-           type === BlockType.RED_SANDSTONE ||
-           type === BlockType.SEA_LANTERN;
+// Blocks that are solid but distinct features (logs, leaves, cactus)
+const isBlockFeature = (type: number) => {
+    const def = getBlockDef(type);
+    // It is a feature if it's solid, but either transparent (leaves) or special model (cactus)
+    // OR if it is a log (we usually want to render logs even if surrounded by leaves)
+    if (type === BlockType.OAK_LOG || type === BlockType.BIRCH_LOG || type === BlockType.SPRUCE_LOG || 
+        type === BlockType.ACACIA_LOG || type === BlockType.JUNGLE_LOG) return true;
+    if (type === BlockType.CACTUS || type === BlockType.MELON) return true;
+    if (def.isTransparent && def.isSolid) return true; // Leaves
+    return false;
 };
 
-// Blocks that should be rendered as 3D blocks in LOD 1 (Trees, Cactus)
-const isBlockFeature = (type: BlockType) => {
-    return type === BlockType.OAK_LOG || type === BlockType.OAK_LEAVES ||
-           type === BlockType.BIRCH_LOG || type === BlockType.BIRCH_LEAVES ||
-           type === BlockType.SPRUCE_LOG || type === BlockType.SPRUCE_LEAVES ||
-           type === BlockType.ACACIA_LOG || type === BlockType.ACACIA_LEAVES ||
-           type === BlockType.JUNGLE_LOG || type === BlockType.JUNGLE_LEAVES ||
-           type === BlockType.CACTUS || type === BlockType.MELON ||
-           type === BlockType.SEA_LANTERN;
-};
-
-// UV Padding to prevent texture bleeding between atlas tiles
 const UV_EPSILON = 0.001;
-
-// Lower the water surface by 2 pixels (2/16 = 0.125)
 const WATER_HEIGHT_OFFSET = 0.875;
 
 const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors }) => {
   const { opaque, transparent: transGeo } = useMemo(() => {
-    // Arrays for Opaque/Cutout blocks
     const opaque = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[] };
     let opaqueCount = 0;
     
-    // Arrays for Transparent blocks (Water)
     const transparent = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[] };
     let transCount = 0;
 
     const uW = 1 / TEXTURE_ATLAS_SIZE;
     const vH = 1.0;
 
-    // Optimization: Destructure neighbors once to avoid repeated prop access in loop
     const { nx, px, nz, pz } = neighbors || {};
 
-    // Helper to get block including neighbors (Inline optimized)
-    const getBlock = (cx: number, cy: number, cz: number): BlockType => {
+    const getBlock = (cx: number, cy: number, cz: number): number => {
         if (cy < 0 || cy >= WORLD_HEIGHT) return BlockType.AIR;
 
-        // Fast path: Inside current chunk
         if (cx >= 0 && cx < CHUNK_SIZE && cz >= 0 && cz < CHUNK_SIZE) {
             return chunk.data[(cx * WORLD_HEIGHT + cy) * CHUNK_SIZE + cz];
         }
 
-        // Neighbor resolution
         let nChunk: ChunkData | undefined;
         let lx = cx;
         let lz = cz;
@@ -101,8 +74,6 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors }) => 
         if (nChunk) {
             return nChunk.data[(lx * WORLD_HEIGHT + cy) * CHUNK_SIZE + lz];
         }
-
-        // Default to Air if neighbor is not loaded
         return BlockType.AIR;
     };
 
@@ -130,18 +101,12 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors }) => 
             target.normals.push(norm[0], norm[1], norm[2]);
         }
 
-        // Apply small padding to avoid texture bleeding
         const u0 = uStart + UV_EPSILON;
         const u1 = uStart + uW - UV_EPSILON;
         const v0 = vStart;
         const v1 = vStart + vH;
 
-        target.uvs.push(
-            u0, v0,      
-            u1, v0, 
-            u0, v1, 
-            u1, v1 
-        );
+        target.uvs.push(u0, v0, u1, v0, u0, v1, u1, v1);
 
         target.indices.push(
             baseIndex, baseIndex + 1, baseIndex + 2,
@@ -170,68 +135,58 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors }) => 
         opaqueCount += 4;
     };
 
-    // === LOD 1: SURFACE MESH (Optimized scan with Features) ===
+    // === LOD 1: SURFACE MESH ===
     if (lodLevel >= 1) {
         const groundHeightMap = new Int32Array(CHUNK_SIZE * CHUNK_SIZE);
         
-        // 1. Build Heightmaps
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 let y = WORLD_HEIGHT - 1;
                 let groundY = -1;
                 let waterY = -1;
 
-                // Scan from top to find surface
                 while (y >= 0) {
                     const t = getBlock(x, y, z);
                     if (isGround(t)) {
                         groundY = y;
-                        break; // Found solid ground, stop.
+                        break; 
                     }
                     if (isWaterOrUnderwaterPlant(t) && waterY === -1) {
-                        waterY = y; // First water block from top
+                        waterY = y; 
                     }
                     y--;
                 }
                 
                 groundHeightMap[x * CHUNK_SIZE + z] = groundY;
 
-                // Render Solid Ground Top
                 if (groundY >= 0) {
                     const type = getBlock(x, groundY, z);
                     const [u, v] = getUVOffset(type, [0, 1, 0]);
                     addQuad(false, [x, groundY, z], [[0, 1, 1], [1, 1, 1], [0, 1, 0], [1, 1, 0]], [0, 1, 0], u, v);
                 }
 
-                // Render Water Top (if above ground)
                 if (waterY > groundY) {
                     const type = BlockType.WATER;
                     const [u, v] = getUVOffset(type, [0, 1, 0]);
-                    // Lower water surface
                     const wh = WATER_HEIGHT_OFFSET;
                     addQuad(true, [x, waterY, z], [[0, wh, 1], [1, wh, 1], [0, wh, 0], [1, wh, 0]], [0, 1, 0], u, v);
                 }
             }
         }
 
-        // 2. Render Sides (Skirts/Cliffs) & Features
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 const groundY = groundHeightMap[x * CHUNK_SIZE + z];
 
-                // A. Sides for solid ground
                 if (groundY >= 0) {
                     const type = getBlock(x, groundY, z);
-                    // Removed the degradation to Dirt for Grass/Snow so they use their own side texture
                     const [uSide, vSide] = getUVOffset(type, [1, 0, 0]);
 
                     const checkNeighbor = (nx: number, nz: number, dirX: number, dirZ: number) => {
-                        // Handle chunk boundaries
                         let ny = -1;
                         if (nx >= 0 && nx < CHUNK_SIZE && nz >= 0 && nz < CHUNK_SIZE) {
                              ny = groundHeightMap[nx * CHUNK_SIZE + nz];
                         } else {
-                             // Neighbor chunk fallback: simple scan at border
                              let scanY = WORLD_HEIGHT - 1;
                              while (scanY >= 0) {
                                  const t = getBlock(nx, scanY, nz);
@@ -257,13 +212,10 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors }) => 
                     checkNeighbor(x, z - 1, 0, -1);
                 }
 
-                // B. Features (Trees, Vegetation)
-                // Scan upwards from the ground surface
                 const startScan = Math.max(0, groundY + 1);
                 for (let y = startScan; y < WORLD_HEIGHT; y++) {
                     const type = getBlock(x, y, z);
                     if (type === BlockType.AIR) continue;
-                    // Do not treat water as a feature, but DO render sprites
                     if (isWater(type)) continue;
 
                     if (isSprite(type)) {
@@ -301,43 +253,32 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors }) => 
                     if (isSprite(type)) {
                         const [u, v] = getUVOffset(type, [0, 1, 0]);
                         addCross(x, y, z, u, v);
-                        // If it's underwater plant, we ALSO want to render water around it (handled below)
                     }
 
-                    // Water or Underwater plants need to trigger water mesh generation
                     const isWaterBlock = isWaterOrUnderwaterPlant(type);
 
-                    // If it's a sprite, we already rendered the cross.
-                    // Unless it's also a water block (Sea Grass), we stop here.
-                    // If it IS a water block replacer, we continue to generate the water cube faces.
                     if (isSprite(type) && !isWaterBlock) continue;
-                    
-                    // If it's a normal block or water/seagrass
-                    if (!isWaterBlock && isSprite(type)) continue; // Redundant safety
+                    if (!isWaterBlock && isSprite(type)) continue; 
 
                     const isSolid = (dx: number, dy: number, dz: number) => {
                         const t = getBlock(x + dx, y + dy, z + dz);
+                        const tDef = getBlockDef(t);
                         
                         if (isWaterBlock) {
-                            // 1. Cull against other water OR water plants
+                            // Cull against water or solids
                             if (isWaterOrUnderwaterPlant(t)) return true;
-                            // 2. Cull against solid terrain (Seabed optimization)
                             if (isGround(t)) return true;
                             return false;
                         } else {
-                            // 1. Solid blocks are drawn against water
+                            // Normal block logic
                             if (isWaterOrUnderwaterPlant(t)) return false;
-                            // 2. Cull against other solid terrain or opaque features
-                            if (isGround(t) || isBlockFeature(t)) return true;
-                            // 3. Sprites or Air do not cull
+                            // Cull against other solid blocks (but not transparent ones like leaves)
+                            if (tDef.isSolid && !tDef.isTransparent) return true;
                             return false;
                         }
                     };
 
-                    // Use Water texture for Seagrass faces (simulating waterlogging)
-                    // Or use normal texture for normal blocks
                     const textureType = isWaterBlock ? BlockType.WATER : type;
-                    
                     const [u, v] = getUVOffset(textureType, [0, 1, 0]);
                     const [uBottom, vBottom] = getUVOffset(textureType, [0, -1, 0]);
                     const [uS, vS] = getUVOffset(textureType, [1, 0, 0]);
@@ -402,15 +343,13 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors }) => 
                 side={THREE.DoubleSide} 
                 transparent={true}
                 opacity={0.65}
-                depthWrite={false} // Disable depth write for water to allow blending
+                depthWrite={false} 
             />
         </mesh>
     </group>
   );
 };
 
-// Custom comparator to prevent re-renders when neighbor prop OBJECT reference changes 
-// but the actual neighbor chunks are the same (or equally missing).
 const arePropsEqual = (prev: ChunkMeshProps, next: ChunkMeshProps) => {
     return prev.chunk === next.chunk && 
            prev.lodLevel === next.lodLevel &&

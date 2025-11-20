@@ -1,44 +1,5 @@
-import React from 'react';
 
-export enum BlockType {
-  AIR = 0,
-  DIRT = 1,
-  GRASS = 2,
-  STONE = 3,
-  OAK_LOG = 4,
-  OAK_LEAVES = 5,
-  WATER = 6,
-  SAND = 7,
-  BEDROCK = 8,
-  SNOW = 9,
-  TALL_GRASS = 10,
-  FLOWER_YELLOW = 11,
-  FLOWER_RED = 12,
-  BIRCH_LOG = 13,
-  BIRCH_LEAVES = 14,
-  SPRUCE_LOG = 15,
-  SPRUCE_LEAVES = 16,
-  CACTUS = 17,
-  DEAD_BUSH = 18,
-  SANDSTONE = 19,
-  GRAVEL = 20,
-  TULIP_RED = 21,
-  TULIP_ORANGE = 22,
-  TULIP_WHITE = 23,
-  TULIP_PINK = 24,
-  CORNFLOWER = 25,
-  // New Blocks
-  ACACIA_LOG = 26,
-  ACACIA_LEAVES = 27,
-  JUNGLE_LOG = 28,
-  JUNGLE_LEAVES = 29,
-  RED_SAND = 30,
-  RED_SANDSTONE = 31,
-  MELON = 32,
-  BLUE_ORCHID = 33,
-  SEAGRASS = 34,
-  SEA_LANTERN = 35,
-}
+import React from 'react';
 
 export type Vector3 = [number, number, number];
 
@@ -76,8 +37,25 @@ export interface GameState {
   toggleMenu: () => void;
   toggleDebug: () => void;
   updateRenderDistance: (dist: number) => void;
-  getBlock: (x: number, y: number, z: number) => BlockType;
-  setBlock: (x: number, y: number, z: number, type: BlockType) => void;
+  getBlock: (x: number, y: number, z: number) => number;
+  setBlock: (x: number, y: number, z: number, type: number) => void;
+}
+
+// New Registry Types
+export interface BlockDefinition {
+  id: number;
+  name: string;
+  isSolid: boolean;
+  isTransparent: boolean; // glass, water, leaves
+  isFluid: boolean; // water
+  isSprite: boolean; // flowers, grass
+  lightLevel?: number;
+  textures: {
+    top: number;
+    side: number;
+    bottom: number;
+  };
+  mapColor: string; // Hex for distant terrain/minimap
 }
 
 // Augment the global JSX namespace to recognize React Three Fiber elements
@@ -88,10 +66,13 @@ declare global {
       meshStandardMaterial: any;
       instancedMesh: any;
       boxGeometry: any;
+      planeGeometry: any;
       color: any;
       fog: any;
+      fogExp2: any;
       ambientLight: any;
       directionalLight: any;
+      hemisphereLight: any;
       group: any;
       pointLight: any;
       primitive: any;

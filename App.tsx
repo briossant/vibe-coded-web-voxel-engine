@@ -2,7 +2,8 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import Game from './components/Game';
 import HUD from './components/HUD';
-import { GameState, ChunkData, Vector3, BlockType } from './types';
+import { GameState, ChunkData, Vector3 } from './types';
+import { BlockType } from './blocks';
 import { DEFAULT_RENDER_DISTANCE } from './constants';
 import { noise } from './utils/noise';
 
@@ -28,7 +29,7 @@ const App: React.FC = () => {
 
   // Placeholders, the real logic is inside Game.tsx for performance context
   const noopGetBlock = (x: number, y: number, z: number) => BlockType.AIR;
-  const noopSetBlock = (x: number, y: number, z: number, type: BlockType) => {};
+  const noopSetBlock = (x: number, y: number, z: number, type: number) => {};
 
   // GameState object to pass down
   const gameState: GameState = {

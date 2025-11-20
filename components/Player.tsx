@@ -3,7 +3,8 @@ import React, { useRef, useEffect, useState } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { Vector3, BlockType } from '../types';
+import { Vector3 } from '../types';
+import { BlockType } from '../blocks';
 import { 
     GRAVITY, 
     JUMP_FORCE, 
@@ -18,8 +19,8 @@ import {
 interface PlayerProps {
   position: Vector3;
   onPositionChange: (pos: Vector3) => void;
-  getBlock: (x: number, y: number, z: number) => BlockType;
-  setBlock: (x: number, y: number, z: number, type: BlockType) => void;
+  getBlock: (x: number, y: number, z: number) => number;
+  setBlock: (x: number, y: number, z: number, type: number) => void;
   setIsUnderwater: (val: boolean) => void;
 }
 
