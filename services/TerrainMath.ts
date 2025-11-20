@@ -5,10 +5,6 @@
  * It is used by both the Main Thread (Physics) and the Web Worker (Generation).
  */
 
-// Re-declare constants inside this context if needed, or pass them in.
-// For the worker injection strategy, we will rely on the fact that these functions
-// are pure and we will stringify them.
-
 export const SEED_OFFSET = 10000;
 
 export const F2 = 0.5 * (Math.sqrt(3.0) - 1.0);
@@ -86,10 +82,24 @@ export class SimplexNoise {
     return 70.0 * (n0 + n1 + n2);
   }
 
+  // Standard Fractal Brownian Motion
   fbm(x: number, y: number, octaves: number, lacunarity: number = 2.0, gain: number = 0.5): number {
     let total = 0; let amplitude = 1; let frequency = 1; let maxValue = 0;
     for(let i = 0; i < octaves; i++) {
         total += this.noise2D(x * frequency, y * frequency) * amplitude;
+        maxValue += amplitude; amplitude *= gain; frequency *= lacunarity;
+    }
+    return total / maxValue;
+  }
+
+  // Ridged Noise: Produces sharp peaks (volcanoes, mountains)
+  ridged(x: number, y: number, octaves: number, lacunarity: number = 2.0, gain: number = 0.5): number {
+    let total = 0; let amplitude = 1; let frequency = 1; let maxValue = 0;
+    for(let i = 0; i < octaves; i++) {
+        let n = this.noise2D(x * frequency, y * frequency);
+        n = 1.0 - Math.abs(n); // Invert so 0 becomes 1 (sharp peak at zero crossing)
+        n = n * n; // Sharpen
+        total += n * amplitude;
         maxValue += amplitude; amplitude *= gain; frequency *= lacunarity;
     }
     return total / maxValue;
@@ -102,6 +112,9 @@ export function smoothstep(min: number, max: number, value: number) {
     const x = Math.max(0, Math.min(1, (value - min) / (max - min)));
     return x * x * (3 - 2 * x);
 }
+export function lerp(a: number, b: number, t: number) {
+    return a + (b - a) * t;
+}
 
 // Biome Constants
 export const BIOMES = {
@@ -109,96 +122,147 @@ export const BIOMES = {
     SNOWY: 5, MOUNTAIN: 6, JUNGLE: 7, SAVANNA: 8, MESA: 9, RIVER: 10
 };
 
-// The Core Generation Function
-// Returns height, biome, and river status
+// --- CORE GENERATION ---
 export function getTerrainInfo(wx: number, wz: number, noiseInstance: SimplexNoise, waterLevel: number, worldHeight: number) {
+    // Use offsets to decorrelate the different noise channels
     const nx = wx + SEED_OFFSET;
     const nz = wz + SEED_OFFSET;
 
-    // 1. Continentalness: Determines Land vs Ocean
-    const continentalness = noiseInstance.fbm(nx * 0.001, nz * 0.001, 2); 
+    // 1. Domain Warping for Organic Shapes
+    // We warp the coordinate space for the "Continent" and "River" noise to avoid grid-like patterns.
+    const warpFreq = 0.002;
+    const warpAmp = 60.0;
+    const qx = noiseInstance.fbm(nx * warpFreq, nz * warpFreq, 2);
+    const qz = noiseInstance.fbm((nx + 521) * warpFreq, (nz + 132) * warpFreq, 2);
     
-    // 2. Erosion: Determines Flatness vs Roughness
-    const erosion = noiseInstance.fbm(nx * 0.002, nz * 0.002, 2);
+    const warpedX = nx + qx * warpAmp;
+    const warpedZ = nz + qz * warpAmp;
 
-    // 3. Temperature & Humidity for Biomes
+    // 2. Macro Noise Layers
+    // Continentalness: Defines Oceans vs Land vs Inland. Low freq.
+    const continentalness = noiseInstance.fbm(warpedX * 0.001, warpedZ * 0.001, 2); 
+    
+    // Erosion: Defines Mountainous vs Flat. Mid freq.
+    // High erosion = Flat/Smooth, Low erosion = Mountainous/Rough
+    const erosion = noiseInstance.fbm(warpedX * 0.0025, warpedZ * 0.0025, 2);
+
+    // Peaks & Valleys (PV): Local detail. High freq.
+    const pv = noiseInstance.fbm(nx * 0.008, nz * 0.008, 3);
+
+    // Temperature & Humidity
     const temperature = noiseInstance.fbm(nx * 0.0005, nz * 0.0005, 2); 
-    const humidity = noiseInstance.fbm((nx + 5000) * 0.0005, (nz + 5000) * 0.0005, 2); 
+    const humidity = noiseInstance.fbm((nx + 600) * 0.0005, (nz + 600) * 0.0005, 2); 
 
-    // 4. River Generation
-    const riverPathNoise = Math.abs(noiseInstance.noise2D(nx * 0.0008, nz * 0.0008));
-    const riverWidthNoise = noiseInstance.noise2D(nx * 0.0001, nz * 0.0001); 
-    const riverThreshold = 0.04 + (riverWidthNoise * 0.02); 
-    const isRiver = riverPathNoise < riverThreshold;
+    // 3. River Generation (Smooth "Trough")
+    // We use a very low frequency for the river path to make it wind gracefully.
+    const riverNoise = noiseInstance.noise2D(warpedX * 0.0004, warpedZ * 0.0004);
+    const riverVal = Math.abs(riverNoise); 
+    // Dynamic river width based on terrain roughness (narrower in mountains, wider in plains)
+    const riverWidthBase = 0.03;
+    const riverWidthVar = smoothstep(-0.5, 0.5, erosion) * 0.02; 
+    const riverEdge = riverWidthBase + riverWidthVar;
 
-    // Base Height
-    const coastThreshold = -0.2;
-    const steepness = 4.0; 
-    const shelfShape = Math.tanh((continentalness - coastThreshold) * steepness);
+    // riverFactor: 0 = center of river, 1 = bank/land
+    // We use smoothstep to create a gradual bank
+    const riverFactor = smoothstep(riverEdge * 0.6, riverEdge, riverVal);
+    const isRiver = riverFactor < 0.9;
+
+    // 4. Height Calculation - Spline/Lerp Approach
     
-    let h = waterLevel + (shelfShape * 40); 
-
-    // Surface Noise
-    const landFactor = smoothstep(-0.4, 0.0, continentalness);
-    const pv = noiseInstance.fbm(nx * 0.01, nz * 0.01, 3);
-    h += pv * 5;
-
-    // Ocean Floor Detail
-    if (h < waterLevel) {
-        const seabedDetail = noiseInstance.noise2D(nx * 0.03, nz * 0.03);
-        h += seabedDetail * 3;
+    // Base Continent Height
+    // We explicitly define height targets for continentalness values and lerp between them
+    let baseHeight = 0;
+    if (continentalness < -0.2) {
+        // Ocean / Deep Ocean
+        baseHeight = lerp(waterLevel - 30, waterLevel - 5, smoothstep(-0.8, -0.2, continentalness));
+    } else if (continentalness < 0.0) {
+        // Coast / Beach
+        baseHeight = lerp(waterLevel - 5, waterLevel + 2, smoothstep(-0.2, 0.0, continentalness));
+    } else {
+        // Land / Inland
+        // Can go quite high if deep inland
+        baseHeight = lerp(waterLevel + 2, waterLevel + 60, smoothstep(0.0, 1.0, continentalness));
     }
 
-    // Big Mountains
-    if (erosion > 0.3) {
-        const mountainHeight = easeInQuart((erosion - 0.3) * 2.5);
-        h += mountainHeight * 90 * landFactor;
+    // Terrain Shaping
+    // Calculate two potential terrain shapes: "Rough/Mountain" and "Smooth/Hill"
+    
+    // Mountain Shape: Uses Ridged noise for jagged peaks
+    // We boost the scale significantly to utilize the new world height
+    const mountainShape = noiseInstance.ridged(nx * 0.004, nz * 0.004, 5) * 220;
+    
+    // Hill Shape: Uses standard FBM for rolling hills
+    const hillShape = pv * 30;
+
+    // Blending Factor: Based on Erosion
+    // High erosion -> Flat/Hilly. Low erosion -> Mountainous.
+    // We use smoothstep to avoid hard chunk borders ("walls").
+    const mountainMix = smoothstep(0.3, -0.3, erosion); // 0.0 = All Hills, 1.0 = All Mountains
+    
+    // Also dampen mountains near coastlines so we don't have Mt Everest on the beach
+    const coastDampen = smoothstep(-0.1, 0.2, continentalness);
+
+    const terrainRoughness = lerp(hillShape, mountainShape, mountainMix) * coastDampen;
+
+    let h = baseHeight + terrainRoughness;
+
+    // 5. Apply River Trough
+    // We carve the terrain down towards the river bed level.
+    const riverBedHeight = waterLevel - 4;
+    if (isRiver) {
+        // If riverFactor is 0 (center), height is riverBedHeight.
+        // If riverFactor is 1 (land), height is h.
+        // We curve the mix to make banks steeper or flatter
+        const carveMix = Math.pow(riverFactor, 0.5); // Square root makes a rounder bottom
+        h = lerp(riverBedHeight, h, carveMix);
     }
 
-    // Carve Rivers
-    if (isRiver && h > waterLevel - 5) {
-         const riverFactor = riverPathNoise / riverThreshold; 
-         const bankShape = smoothstep(0, 1, riverFactor);
-         const riverBedHeight = waterLevel - 2;
-         h = (h * bankShape) + (riverBedHeight * (1 - bankShape));
-    }
+    // 6. Micro Details
+    // Add small noise to everything to break up linear interpolation smoothness
+    h += noiseInstance.noise2D(nx * 0.1, nz * 0.1) * 1.5;
 
-    // Clamp
-    const height = Math.floor(Math.max(2, Math.min(worldHeight - 3, h)));
+    // Clamp strictly to valid range to avoid array index errors, but with a buffer
+    const height = Math.floor(Math.max(2, Math.min(worldHeight - 2, h)));
 
-    // Biome Determination
+    // 7. Biome determination
     let biome = BIOMES.PLAINS;
 
-    if (height <= waterLevel) {
+    // Determine biome based on altitude, temperature, humidity
+    if (height < waterLevel) {
         biome = BIOMES.OCEAN;
-        if (isRiver && height >= waterLevel - 4) biome = BIOMES.RIVER;
-    } else if (height <= waterLevel + 2) {
-         if (temperature > 0.5) biome = BIOMES.DESERT;
-         else if (temperature > 0.0) biome = BIOMES.BEACH;
-         else biome = BIOMES.SNOWY;
-    } 
-    else if (height > 95) {
-        biome = BIOMES.SNOWY;
-    } else if (height > 80) {
-        if (temperature > 0.5) biome = BIOMES.MESA;
-        else biome = BIOMES.MOUNTAIN;
-    } 
-    else {
-        if (temperature > 0.6) { // HOT
-            if (humidity > 0.4) biome = BIOMES.JUNGLE;
-            else if (humidity > -0.2) biome = BIOMES.SAVANNA;
-            else if (humidity > -0.6) biome = BIOMES.MESA;
-            else biome = BIOMES.DESERT;
-        } else if (temperature > 0.0) { // TEMPERATE
-            if (humidity > 0.2) biome = BIOMES.FOREST;
-            else if (humidity > -0.5) biome = BIOMES.PLAINS;
-            else biome = BIOMES.SAVANNA;
-        } else { // COLD
-            biome = BIOMES.SNOWY;
+        if (isRiver && height < waterLevel - 1) biome = BIOMES.RIVER;
+    } else if (height < waterLevel + 2 && continentalness < 0.1) {
+        if (temperature > 0.3) biome = BIOMES.BEACH;
+        else biome = BIOMES.BEACH; // Stony shore?
+    } else {
+        // Altitude based biomes
+        if (height > 240) {
+            biome = BIOMES.SNOWY; // Peaks
+        } else if (height > 160) {
+            if (temperature < 0) biome = BIOMES.SNOWY;
+            else biome = BIOMES.MOUNTAIN;
+        } else {
+            // Standard biomes
+            if (temperature > 0.5) {
+                // HOT
+                if (humidity > 0.3) biome = BIOMES.JUNGLE;
+                else if (humidity > -0.1) biome = BIOMES.SAVANNA;
+                else if (humidity > -0.6) biome = BIOMES.MESA;
+                else biome = BIOMES.DESERT;
+            } else if (temperature > -0.3) {
+                // TEMPERATE
+                if (humidity > 0.2) biome = BIOMES.FOREST;
+                else if (humidity > -0.4) biome = BIOMES.PLAINS;
+                else biome = BIOMES.SAVANNA;
+            } else {
+                // COLD
+                biome = BIOMES.SNOWY;
+            }
         }
     }
     
-    if (isRiver && height > waterLevel) {
+    // River override surface check
+    if (isRiver && height >= waterLevel) {
         biome = BIOMES.RIVER;
     }
 

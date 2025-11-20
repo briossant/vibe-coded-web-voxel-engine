@@ -26,6 +26,7 @@ ${TerrainMath.hash.toString()}
 ${TerrainMath.SimplexNoise.toString()}
 ${TerrainMath.easeInQuart.toString()}
 ${TerrainMath.smoothstep.toString()}
+${TerrainMath.lerp.toString()}
 ${TerrainMath.getTerrainInfo.toString()}
 
 // --- INJECTED GENERATION LOGIC ---

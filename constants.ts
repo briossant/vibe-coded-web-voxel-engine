@@ -1,11 +1,13 @@
 
 
 
+
+
 export const CHUNK_SIZE = 16;
-export const WORLD_HEIGHT = 128;
-export const WATER_LEVEL = 40;
-export const DEFAULT_RENDER_DISTANCE = 64; 
-export const MAX_RENDER_DISTANCE = 256;
+export const WORLD_HEIGHT = 384;
+export const WATER_LEVEL = 64;
+export const DEFAULT_RENDER_DISTANCE = 32; 
+export const MAX_RENDER_DISTANCE = 128;
 
 // Physics & Movement
 export const GRAVITY = 32.0;

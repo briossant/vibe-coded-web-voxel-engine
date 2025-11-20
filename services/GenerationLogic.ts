@@ -89,16 +89,16 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
             placeLeafLayer(x, y+h+1, z, 1, leaves);
         } 
         else if (typeStr === 'SPRUCE') {
-             const h = 7;
+             const h = 7 + Math.floor(hash(x, z, SEED) * 5);
              for(let i=0; i<h; i++) safeSetBlock(x, y + i, z, BLOCKS.SPRUCE_LOG);
              for(let i=2; i<h; i++) {
-                 const r = Math.floor((h-i)*0.4) + 1;
+                 const r = Math.floor((h-i)*0.35) + 1;
                  placeLeafLayer(x, y+i, z, r, BLOCKS.SPRUCE_LEAVES);
              }
              placeLeafLayer(x, y+h, z, 1, BLOCKS.SPRUCE_LEAVES);
         }
         else if (typeStr === 'JUNGLE') {
-            const h = 10 + Math.floor(hash(x, z, SEED) * 5); // Deterministic height
+            const h = 12 + Math.floor(hash(x, z, SEED) * 10); // Taller jungle trees
             for (let i = 0; i < h; i++) safeSetBlock(x, y + i, z, BLOCKS.JUNGLE_LOG);
             placeLeafLayer(x, y+h-2, z, 3, BLOCKS.JUNGLE_LEAVES);
             placeLeafLayer(x, y+h-1, z, 3, BLOCKS.JUNGLE_LEAVES);
@@ -106,7 +106,7 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
             safeSetBlock(x, y+h, z, BLOCKS.JUNGLE_LOG);
         }
         else if (typeStr === 'ACACIA') {
-            const h = 5 + Math.floor(hash(x, z, SEED) * 2);
+            const h = 5 + Math.floor(hash(x, z, SEED) * 3);
             for (let i = 0; i < h; i++) safeSetBlock(x, y + i, z, BLOCKS.ACACIA_LOG);
             
             // Branches
@@ -151,7 +151,7 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
                             case BIOMES.BEACH: block = BLOCKS.SAND; break;
                             case BIOMES.DESERT: block = BLOCKS.SAND; break;
                             case BIOMES.SNOWY: block = BLOCKS.SNOW; break;
-                            case BIOMES.MOUNTAIN: block = BLOCKS.SNOW; break; 
+                            case BIOMES.MOUNTAIN: block = BLOCKS.STONE; break; 
                             case BIOMES.FOREST: block = BLOCKS.GRASS; break;
                             case BIOMES.JUNGLE: block = BLOCKS.GRASS; break;
                             case BIOMES.SAVANNA: block = BLOCKS.DIRT; break; 
@@ -160,16 +160,18 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
                             default: block = BLOCKS.GRASS; break;
                         }
                     } 
-                    // Subsurface
+                    // Subsurface (Dirt depth varies)
                     else if (y > groundHeight - 4) {
                         if (biome === BIOMES.DESERT || biome === BIOMES.BEACH) block = BLOCKS.SANDSTONE;
                         else if (biome === BIOMES.MESA) block = BLOCKS.RED_SANDSTONE;
-                        else if (biome === BIOMES.SNOWY || biome === BIOMES.MOUNTAIN) block = BLOCKS.STONE;
+                        else if (biome === BIOMES.SNOWY) block = BLOCKS.STONE;
+                        else if (biome === BIOMES.MOUNTAIN) block = BLOCKS.STONE;
                         else if (biome === BIOMES.RIVER) block = BLOCKS.GRAVEL;
                         else block = BLOCKS.DIRT;
                     }
+                    
                     // Mesa Banding Pattern
-                    else if (biome === BIOMES.MESA && y > WATER_LEVEL) {
+                    if (biome === BIOMES.MESA && y > WATER_LEVEL) {
                         // Simple noise for banding variation
                         const noiseVal = hash(x, y, SEED) + hash(z, y, SEED);
                         const band = (y + Math.floor(noiseVal * 2)) % 9;
@@ -177,14 +179,24 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
                         else if (band === 4) block = BLOCKS.DIRT;
                         else block = BLOCKS.RED_SAND;
                     }
+                    
+                    // Snow Capping on High Peaks regardless of biome
+                    if (y > 230) { // Raised snow level for new height
+                        if (y === groundHeight) block = BLOCKS.SNOW;
+                        else if (y > groundHeight - 3) block = BLOCKS.SNOW; // Deep snow
+                    }
 
-                    // Caves (Simple Perlin Worms / Cheese)
+                    // Caves (Simplex Worms)
+                    // Optimized 3D-ish noise check
                     if (y < groundHeight - 4 && y > 4) {
-                        // Reuse noise instance for 3D noise approximation or use simple height based 2D noise
-                        // Since we don't have 3D noise exposed in context yet, we simulate with 2D slices
-                        // (Ideally we would inject a noise3D function)
-                         const caveNoise = noise.noise2D(wx * 0.06, y * 0.06) + noise.noise2D(wz * 0.06, y * 0.06);
-                         if (caveNoise > 1.3) block = BLOCKS.AIR;
+                         // Create 3D noise feel by using y in input
+                         const caveScale = 0.06;
+                         // Perturb Y slightly to make caves non-vertical
+                         const caveNoise = noise.noise2D(wx * caveScale, (y + wz) * caveScale) + 
+                                         noise.noise2D((wx + y) * caveScale, wz * caveScale);
+                         // Increase threshold slightly deeper down
+                         const threshold = y < 40 ? 1.25 : 1.35;
+                         if (caveNoise > threshold) block = BLOCKS.AIR;
                     }
 
                     if (block !== BLOCKS.AIR) chunkBuffer[idx] = block;
@@ -217,7 +229,6 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
 
             // Underwater Decorations
             if (h < WATER_LEVEL - 1 && biome === BIOMES.OCEAN) {
-                 // Only place inside valid bounds
                  if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE) {
                      if (r > 0.8) safeSetBlock(x, h+1, z, BLOCKS.SEAGRASS);
                      if (h < WATER_LEVEL - 15 && r > 0.99) safeSetBlock(x, h+1, z, BLOCKS.SEA_LANTERN);
@@ -233,12 +244,15 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
             let treeType: string | null = null;
             let treeChance = 0;
 
-            if (biome === BIOMES.FOREST) { treeChance = 0.08; treeType = 'OAK'; if (r > 0.7) treeType = 'BIRCH'; }
-            else if (biome === BIOMES.PLAINS) { treeChance = 0.002; treeType = 'OAK'; }
-            else if (biome === BIOMES.SNOWY) { treeChance = 0.02; treeType = 'SPRUCE'; }
-            else if (biome === BIOMES.MOUNTAIN) { treeChance = 0.01; treeType = 'SPRUCE'; }
-            else if (biome === BIOMES.JUNGLE) { treeChance = 0.15; treeType = 'JUNGLE'; }
-            else if (biome === BIOMES.SAVANNA) { treeChance = 0.005; treeType = 'ACACIA'; }
+            // Trees don't spawn too high up (treeline)
+            if (h < 210) {
+                if (biome === BIOMES.FOREST) { treeChance = 0.08; treeType = 'OAK'; if (r > 0.7) treeType = 'BIRCH'; }
+                else if (biome === BIOMES.PLAINS) { treeChance = 0.002; treeType = 'OAK'; }
+                else if (biome === BIOMES.SNOWY) { treeChance = 0.02; treeType = 'SPRUCE'; }
+                else if (biome === BIOMES.MOUNTAIN) { treeChance = 0.005; treeType = 'SPRUCE'; }
+                else if (biome === BIOMES.JUNGLE) { treeChance = 0.12; treeType = 'JUNGLE'; }
+                else if (biome === BIOMES.SAVANNA) { treeChance = 0.005; treeType = 'ACACIA'; }
+            }
 
             if (r < treeChance && treeType) {
                 placeTree(x, h + 1, z, treeType);
@@ -282,6 +296,7 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
     else if (biomeCounts[BIOMES.SNOWY] > 50) domB = 'mountain';
     else if (biomeCounts[BIOMES.FOREST] > 50) domB = 'forest';
     else if (biomeCounts[BIOMES.JUNGLE] > 50) domB = 'forest';
+    else if (biomeCounts[BIOMES.MOUNTAIN] > 50) domB = 'mountain';
 
     const avgH = Math.floor(totalHeight / (CHUNK_SIZE * CHUNK_SIZE));
 
