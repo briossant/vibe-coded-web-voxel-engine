@@ -216,6 +216,9 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
      }
   }, [playerPos, gameState]);
 
+  // Get currently selected block from hotbar
+  const selectedBlock = gameState.hotbar[gameState.activeHotbarSlot];
+
   return (
     <>
       <color attach="background" args={['#87CEEB']} />
@@ -225,11 +228,10 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
         sunPosition={[100, 40, 100]} 
         inclination={0.6} 
         azimuth={0.25} 
-        rayleigh={isUnderwater ? 0.5 : 2} // Tweak sky if underwater?
+        rayleigh={isUnderwater ? 0.5 : 2} 
       />
       <Stars radius={200} depth={50} count={5000} factor={4} fade />
       
-      {/* Fog adjustment for underwater */}
       <fogExp2 attach="fog" args={[isUnderwater ? '#00334d' : '#c6e6ff', isUnderwater ? 0.08 : 2.5 / (gameState.renderDistance * CHUNK_SIZE)]} />
       
       <hemisphereLight args={['#c6e6ff', '#5d4037', 0.5]} />
@@ -271,7 +273,9 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
         getBlock={getBlock}
         setBlock={setBlock}
         onPositionChange={handlePosChange}
-        setIsUnderwater={gameState.setIsUnderwater} // Pass the callback from props
+        setIsUnderwater={gameState.setIsUnderwater} 
+        selectedBlock={selectedBlock}
+        isInventoryOpen={gameState.isInventoryOpen}
       />
     </>
   );
@@ -279,7 +283,6 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
 
 // Game Wrapper to handle State Lifting for HUD
 const Game: React.FC<GameProps & { setIsUnderwater: (val: boolean) => void }> = ({ gameState, setChunks, setIsUnderwater }) => {
-    // We extend gameState in the wrapper to pass the setter down
     const enhancedGameState = { ...gameState, setIsUnderwater };
     
     return (

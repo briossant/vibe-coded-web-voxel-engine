@@ -11,7 +11,7 @@ const createAtlas = () => {
   canvas.width = TILE_SIZE * TEXTURE_ATLAS_SIZE;
   canvas.height = TILE_SIZE;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return new THREE.Texture();
+  if (!ctx) return { tex: new THREE.Texture(), url: '' };
 
   const fill = (idx: number, color: string, noise: boolean = true) => {
       const x = idx * TILE_SIZE;
@@ -29,7 +29,7 @@ const createAtlas = () => {
       ctx.strokeRect(x+0.5, 0.5, TILE_SIZE-1, TILE_SIZE-1);
   };
 
-  const flower = (idx: number, stemColor: string, petalColor: string, centerColor: string) => {
+  const flower = (idx: number, stemColor: string, petalColor: string, centerColor: string = '#FFFF00') => {
       const x = idx * TILE_SIZE;
       ctx.clearRect(x, 0, TILE_SIZE, TILE_SIZE);
       ctx.fillStyle = stemColor; 
@@ -166,7 +166,7 @@ const createAtlas = () => {
   ctx.fillStyle = '#3E2723';
   ctx.fillRect(31*TILE_SIZE + 2, 0, 10, 16);
   ctx.fillStyle = '#8D6E63';
-  ctx.fillRect(31*TILE_SIZE + 4, 2, 2, 12);
+  ctx.fillRect(31*TILE_SIZE + 4, 2, 8, 12);
 
   // 32: Acacia Leaves
   fill(32, '#7CB342', true);
@@ -234,10 +234,13 @@ const createAtlas = () => {
   tex.minFilter = THREE.NearestFilter;
   tex.magFilter = THREE.NearestFilter;
   tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  
+  return { tex, url: canvas.toDataURL() };
 };
 
-export const globalTexture = createAtlas();
+const { tex, url } = createAtlas();
+export const globalTexture = tex;
+export const textureUrl = url;
 
 export const getUVOffset = (type: number, normal: number[]): [number, number] => {
    const def = getBlockDef(type);

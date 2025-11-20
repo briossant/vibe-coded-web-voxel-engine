@@ -33,6 +33,19 @@ export interface GameState {
   seed: number;
   isMenuOpen: boolean;
   debugMode: boolean;
+  
+  // Inventory & Hotbar State
+  isInventoryOpen: boolean;
+  setInventoryOpen: (isOpen: boolean) => void;
+  hotbar: number[];
+  setHotbar: (slots: number[]) => void;
+  activeHotbarSlot: number;
+  setActiveHotbarSlot: (slot: number) => void;
+  
+  // Added missing properties
+  selectedBlock?: number;
+  setSelectedBlock?: (blockId: number) => void;
+
   setPlayerPosition: (pos: Vector3) => void;
   toggleMenu: () => void;
   toggleDebug: () => void;
@@ -41,10 +54,13 @@ export interface GameState {
   setBlock: (x: number, y: number, z: number, type: number) => void;
 }
 
+export type BlockCategory = 'Nature' | 'Wood' | 'Plants' | 'Building' | 'Misc';
+
 // New Registry Types
 export interface BlockDefinition {
   id: number;
   name: string;
+  category: BlockCategory;
   isSolid: boolean;
   isTransparent: boolean; // glass, water, leaves
   isFluid: boolean; // water

@@ -1,5 +1,5 @@
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -22,6 +22,8 @@ interface PlayerProps {
   getBlock: (x: number, y: number, z: number) => number;
   setBlock: (x: number, y: number, z: number, type: number) => void;
   setIsUnderwater: (val: boolean) => void;
+  selectedBlock: number; // New prop
+  isInventoryOpen: boolean; // New prop
 }
 
 // Constants for player dimensions
@@ -29,7 +31,15 @@ const PLAYER_WIDTH = 0.6;
 const PLAYER_HEIGHT = 1.8;
 const EYE_HEIGHT = 1.6;
 
-const Player: React.FC<PlayerProps> = ({ position, onPositionChange, getBlock, setBlock, setIsUnderwater }) => {
+const Player: React.FC<PlayerProps> = ({ 
+    position, 
+    onPositionChange, 
+    getBlock, 
+    setBlock, 
+    setIsUnderwater, 
+    selectedBlock,
+    isInventoryOpen
+}) => {
   const { camera } = useThree();
   const controlsRef = useRef<any>(null);
   
@@ -103,6 +113,7 @@ const Player: React.FC<PlayerProps> = ({ position, onPositionChange, getBlock, s
 
   useEffect(() => {
     const onMouseDown = (e: MouseEvent) => {
+        if (isInventoryOpen) return; // Don't place/mine if inventory is open
         if (!controlsRef.current?.isLocked) return;
         
         const dir = new THREE.Vector3();
@@ -133,19 +144,32 @@ const Player: React.FC<PlayerProps> = ({ position, onPositionChange, getBlock, s
                                   (pMinY < bMaxY && pMaxY > bMinY) &&
                                   (pMinZ < bMaxZ && pMaxZ > bMinZ);
 
-                if (!intersect) {
-                    setBlock(nx, ny, nz, BlockType.STONE);
+                if (!intersect && selectedBlock !== BlockType.AIR) {
+                    setBlock(nx, ny, nz, selectedBlock);
                 }
             }
         }
     };
     document.addEventListener('mousedown', onMouseDown);
     return () => document.removeEventListener('mousedown', onMouseDown);
-  }, [camera, getBlock, setBlock]);
+  }, [camera, getBlock, setBlock, selectedBlock, isInventoryOpen]);
+
+  // Handle Pointer Lock based on Inventory state
+  useEffect(() => {
+      if (isInventoryOpen) {
+          document.exitPointerLock();
+      } else {
+          // We don't auto-lock, the user must click to lock.
+          // But if we just closed inventory, maybe we want to? 
+          // Standard practice is user clicks game to resume.
+      }
+  }, [isInventoryOpen]);
 
   // --- Input Management ---
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (isInventoryOpen) return; // Disable movement when in inventory
+      
       switch (e.code) {
         case 'KeyW': keys.current.forward = true; break;
         case 'KeyA': keys.current.left = true; break;
@@ -169,7 +193,7 @@ const Player: React.FC<PlayerProps> = ({ position, onPositionChange, getBlock, s
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
     return () => { document.removeEventListener('keydown', onKeyDown); document.removeEventListener('keyup', onKeyUp); };
-  }, []);
+  }, [isInventoryOpen]);
 
   // --- Physics Logic ---
 
@@ -204,6 +228,9 @@ const Player: React.FC<PlayerProps> = ({ position, onPositionChange, getBlock, s
   };
 
   useFrame((state, delta) => {
+    // If inventory is open, we might want to freeze physics or just input?
+    // Usually physics continues but input stops.
+    // Controls lock check is enough.
     if (!controlsRef.current?.isLocked) return;
     
     const dt = Math.min(delta, 0.1);
@@ -389,7 +416,7 @@ const Player: React.FC<PlayerProps> = ({ position, onPositionChange, getBlock, s
     onPositionChange([pos.current.x, pos.current.y, pos.current.z]);
   });
 
-  return <PointerLockControls ref={controlsRef} />;
+  return <PointerLockControls ref={controlsRef} selector="#root" />;
 };
 
 export default Player;
