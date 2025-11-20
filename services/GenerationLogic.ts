@@ -156,7 +156,17 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
                             case BIOMES.JUNGLE: block = BLOCKS.GRASS; break;
                             case BIOMES.SAVANNA: block = BLOCKS.DIRT; break; 
                             case BIOMES.MESA: block = BLOCKS.RED_SAND; break;
-                            case BIOMES.RIVER: block = BLOCKS.SAND; break;
+                            case BIOMES.RIVER: 
+                                // Improved River Banking:
+                                // Only place sand/gravel very close to water level.
+                                // Higher up on the river valley slopes, use Grass.
+                                if (y <= WATER_LEVEL + 2) {
+                                    // Erosion mix: 30% chance of gravel near water
+                                    block = hash(x, z, SEED) > 0.3 ? BLOCKS.SAND : BLOCKS.GRAVEL;
+                                } else {
+                                    block = BLOCKS.GRASS;
+                                }
+                                break;
                             default: block = BLOCKS.GRASS; break;
                         }
                     } 

@@ -154,17 +154,6 @@ const Player: React.FC<PlayerProps> = ({
     return () => document.removeEventListener('mousedown', onMouseDown);
   }, [camera, getBlock, setBlock, selectedBlock, isInventoryOpen]);
 
-  // Handle Pointer Lock based on Inventory state
-  useEffect(() => {
-      if (isInventoryOpen) {
-          document.exitPointerLock();
-      } else {
-          // We don't auto-lock, the user must click to lock.
-          // But if we just closed inventory, maybe we want to? 
-          // Standard practice is user clicks game to resume.
-      }
-  }, [isInventoryOpen]);
-
   // --- Input Management ---
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -228,9 +217,8 @@ const Player: React.FC<PlayerProps> = ({
   };
 
   useFrame((state, delta) => {
-    // If inventory is open, we might want to freeze physics or just input?
-    // Usually physics continues but input stops.
-    // Controls lock check is enough.
+    // Only run physics/inputs if locked (active play)
+    // If inventory is open, controlsRef.current is null, so this skips.
     if (!controlsRef.current?.isLocked) return;
     
     const dt = Math.min(delta, 0.1);
@@ -416,7 +404,13 @@ const Player: React.FC<PlayerProps> = ({
     onPositionChange([pos.current.x, pos.current.y, pos.current.z]);
   });
 
-  return <PointerLockControls ref={controlsRef} selector="#root" />;
+  // Only render PointerLockControls when inventory is CLOSED.
+  // This prevents conflicting lock requests/events when using the UI.
+  return (
+      <>
+        {!isInventoryOpen && <PointerLockControls ref={controlsRef} selector="#root" />}
+      </>
+  );
 };
 
 export default Player;

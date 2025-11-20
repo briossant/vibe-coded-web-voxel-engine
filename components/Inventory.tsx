@@ -29,7 +29,11 @@ const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, onSelectBlock })
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+    <div 
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+    >
       <div className="bg-[#1a1a1a] border border-gray-700 w-[800px] h-[600px] rounded-lg flex flex-col shadow-2xl text-white overflow-hidden">
         
         {/* Header & Tabs */}
