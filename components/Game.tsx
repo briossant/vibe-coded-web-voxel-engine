@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Sky, Stats, Stars } from '@react-three/drei';
+import { Sky, Stats, Stars, Cloud } from '@react-three/drei';
 import * as THREE from 'three';
 import { Vector3, ChunkData, GameState } from '../types';
 import { BlockType } from '../blocks';
@@ -21,6 +20,33 @@ interface GameSceneProps {
   gameState: GameState & { setIsUnderwater: (val: boolean) => void };
   setChunks: React.Dispatch<React.SetStateAction<Map<string, ChunkData>>>;
 }
+
+// Procedural Clouds Component
+const ProceduralClouds = () => {
+    return (
+        <group position={[0, 150, 0]}>
+            <Cloud position={[-100, 0, -100]} opacity={0.5} speed={0.2} bounds={[20, 2, 10]} segments={20} />
+            <Cloud position={[100, 20, 100]} opacity={0.5} speed={0.2} bounds={[20, 2, 10]} segments={20} />
+            <Cloud position={[50, -10, -50]} opacity={0.4} speed={0.2} bounds={[30, 2, 10]} segments={20} />
+            <Cloud position={[-50, 10, 50]} opacity={0.6} speed={0.2} bounds={[30, 2, 10]} segments={20} />
+        </group>
+    );
+};
+
+// SkyBox Component that follows the camera
+const SkyBox = () => {
+    const groupRef = useRef<THREE.Group>(null);
+    useFrame(({ camera }) => {
+        if (groupRef.current) {
+            groupRef.current.position.copy(camera.position);
+        }
+    });
+    return (
+        <group ref={groupRef}>
+            <Stars radius={200} depth={50} count={5000} factor={4} fade />
+        </group>
+    );
+};
 
 const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
   const [playerPos, setPlayerPos] = useState<Vector3>(() => {
@@ -44,7 +70,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
       if (lightRef.current) {
           const cx = camera.position.x;
           const cz = camera.position.z;
-          lightRef.current.position.set(cx + 50, 120, cz + 50);
+          lightRef.current.position.set(cx + 60, 140, cz + 40);
           lightRef.current.target.position.set(cx, 0, cz);
           lightRef.current.target.updateMatrixWorld();
       }
@@ -155,13 +181,8 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
           const dx = Math.abs(chunk.x - cx);
           const dz = Math.abs(chunk.z - cz);
           const dist = Math.max(dx, dz); 
-
-          // LOD Strategy: 
-          // 0 = Full Voxel Mesh (Closest)
-          // 1 = Surface Mesh (Medium Range)
-          // DistantTerrain (Low Detail)
           
-          if (dist < 2) {
+          if (dist < 3) { // Increased LOD0 range slightly
               high.push({ chunk, lod: 0 });
           } else if (dist < 16) {
               high.push({ chunk, lod: 1 });
@@ -226,31 +247,43 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
       
       <Sky 
         distance={450000} 
-        sunPosition={[100, 40, 100]} 
-        inclination={0.6} 
+        sunPosition={[100, 50, 100]} 
+        inclination={0.49} 
         azimuth={0.25} 
-        rayleigh={isUnderwater ? 0.5 : 2} 
+        rayleigh={isUnderwater ? 1 : 0.2} // Crisper sky
+        mieCoefficient={0.005}
+        mieDirectionalG={0.7}
       />
-      <Stars radius={200} depth={50} count={5000} factor={4} fade />
       
-      <fogExp2 attach="fog" args={[isUnderwater ? '#00334d' : '#c6e6ff', isUnderwater ? 0.08 : 2.5 / (gameState.renderDistance * CHUNK_SIZE)]} />
+      {/* Infinite Stars */}
+      <SkyBox />
       
-      <hemisphereLight args={['#c6e6ff', '#5d4037', 0.5]} />
-      <ambientLight intensity={0.3} />
+      {/* Improved Fog matching Sky color better */}
+      <fogExp2 attach="fog" args={[isUnderwater ? '#00334d' : '#B3D9FF', isUnderwater ? 0.08 : 0.0015]} />
+      
+      <ProceduralClouds />
+
+      {/* 
+        Lighting Setup:
+        - Hemisphere for basic fill (Sky blue vs Ground brown)
+        - Directional for sun shadows
+      */}
+      <hemisphereLight args={['#E3F2FD', '#3E2723', 0.7]} />
+      <ambientLight intensity={0.4} />
       <primitive object={lightTarget} />
       <directionalLight
         ref={lightRef}
         target={lightTarget}
         position={[50, 100, 50]}
-        intensity={1.4}
+        intensity={1.2}
         castShadow
-        shadow-bias={-0.0005}
+        shadow-bias={-0.0001}
         shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-100}
-        shadow-camera-right={100}
-        shadow-camera-top={100}
-        shadow-camera-bottom={-100}
-        shadow-camera-far={300}
+        shadow-camera-left={-120}
+        shadow-camera-right={120}
+        shadow-camera-top={120}
+        shadow-camera-bottom={-120}
+        shadow-camera-far={350}
       />
 
       {highDetailChunks.map(({ chunk, lod }) => (
@@ -282,7 +315,6 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
   );
 };
 
-// Game Wrapper to handle State Lifting for HUD
 const Game: React.FC<GameProps & { setIsUnderwater: (val: boolean) => void }> = ({ gameState, setChunks, setIsUnderwater }) => {
     const enhancedGameState = { ...gameState, setIsUnderwater };
     

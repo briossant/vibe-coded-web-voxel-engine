@@ -1,6 +1,6 @@
-
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { useFrame } from '@react-three/fiber';
 import { ChunkData } from '../types';
 import { CHUNK_SIZE, WORLD_HEIGHT } from '../constants';
 import { globalTexture, getUVOffset, TEXTURE_ATLAS_SIZE } from '../utils/textures';
@@ -11,45 +11,97 @@ interface ChunkMeshProps {
   lodLevel: number; 
   neighbors?: {
       nx?: ChunkData; px?: ChunkData; nz?: ChunkData; pz?: ChunkData;
+      n_nxnz?: ChunkData; n_pxnz?: ChunkData; n_nxpz?: ChunkData; n_pxpz?: ChunkData;
   };
 }
 
-// Replaced local helpers with Registry lookups
-const isSprite = (type: number) => getBlockDef(type).isSprite;
-const isWater = (type: number) => getBlockDef(type).isFluid;
-const isWaterOrUnderwaterPlant = (type: number) => {
-    const def = getBlockDef(type);
-    return def.isFluid || (def.isSprite && type === BlockType.SEAGRASS); // Special case for seagrass
+// --- Shader for Water ---
+const WaterShaderMaterial = {
+    uniforms: {
+        uTime: { value: 0 },
+        uTexture: { value: globalTexture },
+        uSunColor: { value: new THREE.Color('#ffffee') },
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        varying float vElevation;
+        varying vec3 vViewPosition;
+        varying vec3 vNormal;
+        
+        uniform float uTime;
+
+        void main() {
+            vUv = uv;
+            
+            // Calculate world position for seamless waves across chunks
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vec3 pos = worldPosition.xyz;
+            
+            // Wave function using world coordinates
+            float wave = sin(pos.x * 0.5 + uTime) * 0.1 + cos(pos.z * 0.4 + uTime * 0.8) * 0.1;
+            
+            // Apply wave to local Y position
+            vec3 newPos = position;
+            newPos.y += wave * 0.5;
+            vElevation = wave;
+
+            vec4 mvPosition = modelViewMatrix * vec4(newPos, 1.0);
+            vViewPosition = -mvPosition.xyz;
+            vNormal = normalMatrix * normal;
+            
+            gl_Position = projectionMatrix * mvPosition;
+        }
+    `,
+    fragmentShader: `
+        uniform sampler2D uTexture;
+        uniform vec3 uSunColor;
+        
+        varying vec2 vUv;
+        varying float vElevation;
+        varying vec3 vViewPosition;
+        varying vec3 vNormal;
+
+        void main() {
+            vec4 texColor = texture2D(uTexture, vUv);
+            
+            vec3 waterColor = vec3(0.0, 0.4, 0.7);
+            vec3 finalColor = mix(waterColor, texColor.rgb, 0.3);
+
+            finalColor += vElevation * 0.1;
+
+            vec3 viewDir = normalize(vViewPosition);
+            vec3 normal = normalize(vNormal);
+            float fresnelTerm = dot(viewDir, normal);
+            fresnelTerm = clamp(1.0 - fresnelTerm, 0.0, 1.0);
+            fresnelTerm = pow(fresnelTerm, 3.0);
+
+            finalColor = mix(finalColor, uSunColor, fresnelTerm * 0.6);
+
+            gl_FragColor = vec4(finalColor, 0.75); 
+        }
+    `
 };
 
-// Ground = Terrain Skin. Exclude Wood (Trees) so they don't stretch.
-const isGround = (type: number) => {
-    const def = getBlockDef(type);
-    // Exclude Logs and Leaves so they render as distinct blocks instead of terrain skin
-    if (def.category === 'Wood') return false; 
-    if (type === BlockType.CACTUS || type === BlockType.MELON) return false;
-    return def.isSolid && !def.isTransparent && !def.isFluid;
-};
-
-// Features = Objects on top of terrain (Trees, Cactus, etc)
-const isBlockFeature = (type: number) => {
-    const def = getBlockDef(type);
-    // Include all Wood (Logs & Leaves) to be rendered as individual blocks in LOD 1
-    if (def.category === 'Wood') return true; 
-    if (type === BlockType.CACTUS || type === BlockType.MELON) return true;
-    return false;
-};
-
-const UV_EPSILON = 0.001;
-const WATER_HEIGHT_OFFSET = 0.875;
+const AO_INTENSITY = [1.0, 0.85, 0.65, 0.45]; 
 
 const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors }) => {
-  const { opaque, transparent: transGeo } = useMemo(() => {
-    const opaque = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[] };
+  const materialRef = useRef<THREE.ShaderMaterial>(null);
+
+  useFrame(({ clock }) => {
+      if (materialRef.current) {
+          materialRef.current.uniforms.uTime.value = clock.getElapsedTime();
+      }
+  });
+
+  const { opaque, foliage, water } = useMemo(() => {
+    const opaque = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[], colors: [] as number[] };
     let opaqueCount = 0;
     
-    const transparent = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[] };
-    let transCount = 0;
+    const foliage = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[], colors: [] as number[] };
+    let foliageCount = 0;
+    
+    const water = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[], colors: [] as number[] };
+    let waterCount = 0;
 
     const uW = 1 / TEXTURE_ATLAS_SIZE;
     const vH = 1.0;
@@ -58,262 +110,238 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors }) => 
 
     const getBlock = (cx: number, cy: number, cz: number): number => {
         if (cy < 0 || cy >= WORLD_HEIGHT) return BlockType.AIR;
-
         if (cx >= 0 && cx < CHUNK_SIZE && cz >= 0 && cz < CHUNK_SIZE) {
             return chunk.data[(cx * WORLD_HEIGHT + cy) * CHUNK_SIZE + cz];
         }
-
-        let nChunk: ChunkData | undefined;
-        let lx = cx;
-        let lz = cz;
-
-        if (cx < 0) { nChunk = nx; lx += CHUNK_SIZE; }
-        else if (cx >= CHUNK_SIZE) { nChunk = px; lx -= CHUNK_SIZE; }
-        else if (cz < 0) { nChunk = nz; lz += CHUNK_SIZE; }
-        else if (cz >= CHUNK_SIZE) { nChunk = pz; lz -= CHUNK_SIZE; }
-
-        if (nChunk) {
-            return nChunk.data[(lx * WORLD_HEIGHT + cy) * CHUNK_SIZE + lz];
-        }
+        if (cx < 0) return nx ? nx.data[((cx + CHUNK_SIZE) * WORLD_HEIGHT + cy) * CHUNK_SIZE + cz] : BlockType.AIR;
+        if (cx >= CHUNK_SIZE) return px ? px.data[((cx - CHUNK_SIZE) * WORLD_HEIGHT + cy) * CHUNK_SIZE + cz] : BlockType.AIR;
+        if (cz < 0) return nz ? nz.data[(cx * WORLD_HEIGHT + cy) * CHUNK_SIZE + (cz + CHUNK_SIZE)] : BlockType.AIR;
+        if (cz >= CHUNK_SIZE) return pz ? pz.data[(cx * WORLD_HEIGHT + cy) * CHUNK_SIZE + (cz - CHUNK_SIZE)] : BlockType.AIR;
         return BlockType.AIR;
     };
 
+    const isSolidForAO = (bx: number, by: number, bz: number) => {
+        const t = getBlock(bx, by, bz);
+        const def = getBlockDef(t);
+        return def.isSolid && !def.isTransparent; 
+    };
+
+    const computeAO = (x: number, y: number, z: number, normal: number[]): number[] => {
+        const nx = normal[0], ny = normal[1], nz = normal[2];
+        const px = x + nx; const py = y + ny; const pz = z + nz;
+        const aoValues = [0,0,0,0]; 
+        const vertexAO = (s1: boolean, s2: boolean, c: boolean) => {
+            if (s1 && s2) return 3; 
+            return (s1 ? 1 : 0) + (s2 ? 1 : 0) + (c ? 1 : 0);
+        };
+
+        if (ny > 0) { // TOP
+            const nN = isSolidForAO(px, py, pz-1); 
+            const nS = isSolidForAO(px, py, pz+1); 
+            const nW = isSolidForAO(px-1, py, pz); 
+            const nE = isSolidForAO(px+1, py, pz); 
+            const nNW = isSolidForAO(px-1, py, pz-1);
+            const nNE = isSolidForAO(px+1, py, pz-1);
+            const nSW = isSolidForAO(px-1, py, pz+1);
+            const nSE = isSolidForAO(px+1, py, pz+1);
+
+            aoValues[0] = vertexAO(nW, nS, nSW);
+            aoValues[1] = vertexAO(nE, nS, nSE);
+            aoValues[2] = vertexAO(nW, nN, nNW);
+            aoValues[3] = vertexAO(nE, nN, nNE);
+        } 
+        else if (nz > 0) { // FRONT
+           const nU = isSolidForAO(px, py+1, pz);
+           const nD = isSolidForAO(px, py-1, pz);
+           const nL = isSolidForAO(px-1, py, pz);
+           const nR = isSolidForAO(px+1, py, pz);
+           const nLU = isSolidForAO(px-1, py+1, pz);
+           const nRU = isSolidForAO(px+1, py+1, pz);
+           const nLD = isSolidForAO(px-1, py-1, pz);
+           const nRD = isSolidForAO(px+1, py-1, pz);
+
+           aoValues[0] = vertexAO(nL, nU, nLU); 
+           aoValues[1] = vertexAO(nR, nU, nRU); 
+           aoValues[2] = vertexAO(nL, nD, nLD); 
+           aoValues[3] = vertexAO(nR, nD, nRD); 
+        }
+        else {
+             const nU = isSolidForAO(px, py+1, pz);
+             const nD = isSolidForAO(px, py-1, pz);
+             const aoTop = nU ? 1 : 0;
+             const aoBot = nD ? 1 : 0;
+             aoValues[0] = aoTop; aoValues[1] = aoTop;
+             aoValues[2] = aoBot; aoValues[3] = aoBot;
+        }
+        return aoValues.map(idx => AO_INTENSITY[idx]);
+    };
+
     const addQuad = (
-        isTrans: boolean,
+        targetType: 'opaque' | 'foliage' | 'water',
         pos: number[], 
         corners: number[][], 
         norm: number[], 
         uStart: number, vStart: number,
-        heightOverride?: number 
+        calcAo: boolean = true,
+        rotation: number = 0 // 0 to 3
     ) => {
-        const target = isTrans ? transparent : opaque;
-        const baseIndex = isTrans ? transCount : opaqueCount;
+        const target = targetType === 'opaque' ? opaque : (targetType === 'water' ? water : foliage);
+        const baseIndex = targetType === 'opaque' ? opaqueCount : (targetType === 'water' ? waterCount : foliageCount);
+        
+        let aos = [1,1,1,1];
+        if (calcAo && targetType === 'opaque') {
+            aos = computeAO(pos[0], pos[1], pos[2], norm);
+        }
 
         for (let i = 0; i < 4; i++) {
             const x = pos[0] + corners[i][0];
-            let y = pos[1] + corners[i][1];
+            const y = pos[1] + corners[i][1];
             const z = pos[2] + corners[i][2];
-
-            if (heightOverride !== undefined && corners[i][1] === 0) {
-               y = heightOverride;
-            }
 
             target.positions.push(x, y, z);
             target.normals.push(norm[0], norm[1], norm[2]);
+            
+            if (targetType !== 'water') {
+                const brightness = aos[i];
+                target.colors!.push(brightness, brightness, brightness);
+            }
         }
 
-        const u0 = uStart + UV_EPSILON;
-        const u1 = uStart + uW - UV_EPSILON;
+        const u0 = uStart + 0.001;
+        const u1 = uStart + uW - 0.001;
         const v0 = vStart;
         const v1 = vStart + vH;
+        
+        // UV Permutation for rotation (Standard Quad Order)
+        // 0: u0, v0
+        // 1: u1, v0
+        // 2: u0, v1
+        // 3: u1, v1
+        // Permutations derived for CW rotation
+        const perms = [
+            [0, 1, 2, 3], // 0 deg
+            [2, 0, 3, 1], // 90 deg
+            [3, 2, 1, 0], // 180 deg
+            [1, 3, 0, 2]  // 270 deg
+        ];
+        const p = perms[rotation % 4];
+        const uvSet = [u0, v0, u1, v0, u0, v1, u1, v1];
 
-        target.uvs.push(u0, v0, u1, v0, u0, v1, u1, v1);
-
-        target.indices.push(
-            baseIndex, baseIndex + 1, baseIndex + 2,
-            baseIndex + 1, baseIndex + 3, baseIndex + 2
+        target.uvs.push(
+            uvSet[p[0]*2], uvSet[p[0]*2+1], 
+            uvSet[p[1]*2], uvSet[p[1]*2+1], 
+            uvSet[p[2]*2], uvSet[p[2]*2+1], 
+            uvSet[p[3]*2], uvSet[p[3]*2+1]
         );
-        
-        if (isTrans) transCount += 4; else opaqueCount += 4;
-    };
 
+        target.indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex + 1, baseIndex + 3, baseIndex + 2);
+        
+        if (targetType === 'opaque') opaqueCount += 4;
+        else if (targetType === 'water') waterCount += 4;
+        else foliageCount += 4;
+    };
+    
     const addCross = (x: number, y: number, z: number, uStart: number, vStart: number) => {
-        const u0 = uStart + UV_EPSILON;
-        const u1 = uStart + uW - UV_EPSILON;
+        const u0 = uStart + 0.001;
+        const u1 = uStart + uW - 0.001;
         const v0 = vStart;
         const v1 = vStart + vH;
+        const ao = 1.0; 
 
-        opaque.positions.push(x, y, z, x+1, y, z+1, x, y+1, z, x+1, y+1, z+1);
-        opaque.normals.push(0.7,0,0.7, 0.7,0,0.7, 0.7,0,0.7, 0.7,0,0.7);
-        opaque.uvs.push(u0, v0, u1, v0, u0, v1, u1, v1);
-        opaque.indices.push(opaqueCount, opaqueCount+1, opaqueCount+2, opaqueCount+1, opaqueCount+3, opaqueCount+2);
-        opaqueCount += 4;
+        foliage.positions.push(x, y, z, x+1, y, z+1, x, y+1, z, x+1, y+1, z+1);
+        foliage.normals.push(0.7,0,0.7, 0.7,0,0.7, 0.7,0,0.7, 0.7,0,0.7);
+        foliage.uvs.push(u0, v0, u1, v0, u0, v1, u1, v1);
+        foliage.colors!.push(ao,ao,ao, ao,ao,ao, ao,ao,ao, ao,ao,ao);
+        foliage.indices.push(foliageCount, foliageCount+1, foliageCount+2, foliageCount+1, foliageCount+3, foliageCount+2);
+        foliageCount += 4;
 
-        opaque.positions.push(x, y, z+1, x+1, y, z, x, y+1, z+1, x+1, y+1, z);
-        opaque.normals.push(-0.7,0,0.7, -0.7,0,0.7, -0.7,0,0.7, -0.7,0,0.7);
-        opaque.uvs.push(u0, v0, u1, v0, u0, v1, u1, v1);
-        opaque.indices.push(opaqueCount, opaqueCount+1, opaqueCount+2, opaqueCount+1, opaqueCount+3, opaqueCount+2);
-        opaqueCount += 4;
+        foliage.positions.push(x, y, z+1, x+1, y, z, x, y+1, z+1, x+1, y+1, z);
+        foliage.normals.push(-0.7,0,0.7, -0.7,0,0.7, -0.7,0,0.7, -0.7,0,0.7);
+        foliage.uvs.push(u0, v0, u1, v0, u0, v1, u1, v1);
+        foliage.colors!.push(ao,ao,ao, ao,ao,ao, ao,ao,ao, ao,ao,ao);
+        foliage.indices.push(foliageCount, foliageCount+1, foliageCount+2, foliageCount+1, foliageCount+3, foliageCount+2);
+        foliageCount += 4;
     };
 
-    // === LOD 1: SURFACE MESH ===
-    if (lodLevel >= 1) {
-        const groundHeightMap = new Int32Array(CHUNK_SIZE * CHUNK_SIZE);
-        
-        for (let x = 0; x < CHUNK_SIZE; x++) {
+    for (let x = 0; x < CHUNK_SIZE; x++) {
+        for (let y = 0; y < WORLD_HEIGHT; y++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
-                let y = WORLD_HEIGHT - 1;
-                let groundY = -1;
-                let waterY = -1;
-
-                while (y >= 0) {
-                    const t = getBlock(x, y, z);
-                    if (isGround(t)) {
-                        groundY = y;
-                        break; 
-                    }
-                    if (isWaterOrUnderwaterPlant(t) && waterY === -1) {
-                        waterY = y; 
-                    }
-                    y--;
-                }
+                const type = chunk.data[(x * WORLD_HEIGHT + y) * CHUNK_SIZE + z];
+                if (type === BlockType.AIR) continue;
                 
-                groundHeightMap[x * CHUNK_SIZE + z] = groundY;
-
-                if (groundY >= 0) {
-                    const type = getBlock(x, groundY, z);
+                const typeDef = getBlockDef(type);
+                const isSeagrass = type === BlockType.SEAGRASS;
+                
+                // 1. Render Sprites
+                if (typeDef.isSprite) {
                     const [u, v] = getUVOffset(type, [0, 1, 0]);
-                    addQuad(false, [x, groundY, z], [[0, 1, 1], [1, 1, 1], [0, 1, 0], [1, 1, 0]], [0, 1, 0], u, v);
+                    addCross(x, y, z, u, v);
+                    if (!isSeagrass) continue;
                 }
 
-                if (waterY > groundY) {
-                    const type = BlockType.WATER;
-                    const [u, v] = getUVOffset(type, [0, 1, 0]);
-                    const wh = WATER_HEIGHT_OFFSET;
-                    addQuad(true, [x, waterY, z], [[0, wh, 1], [1, wh, 1], [0, wh, 0], [1, wh, 0]], [0, 1, 0], u, v);
-                }
-            }
-        }
+                // 2. Volume Rendering
+                const isBlockWater = type === BlockType.WATER || isSeagrass;
+                const volumeType = isBlockWater ? BlockType.WATER : type;
+                const isBlockFoliage = typeDef.isTransparent && !isBlockWater && !isSeagrass;
+                const targetType = isBlockWater ? 'water' : (isBlockFoliage ? 'foliage' : 'opaque');
 
-        for (let x = 0; x < CHUNK_SIZE; x++) {
-            for (let z = 0; z < CHUNK_SIZE; z++) {
-                const groundY = groundHeightMap[x * CHUNK_SIZE + z];
-
-                if (groundY >= 0) {
-                    const type = getBlock(x, groundY, z);
-                    const [uSide, vSide] = getUVOffset(type, [1, 0, 0]);
-
-                    const checkNeighbor = (nx: number, nz: number, dirX: number, dirZ: number) => {
-                        let ny = -1;
-                        if (nx >= 0 && nx < CHUNK_SIZE && nz >= 0 && nz < CHUNK_SIZE) {
-                             ny = groundHeightMap[nx * CHUNK_SIZE + nz];
-                        } else {
-                             let scanY = WORLD_HEIGHT - 1;
-                             while (scanY >= 0) {
-                                 const t = getBlock(nx, scanY, nz);
-                                 if (isGround(t)) { ny = scanY; break; }
-                                 scanY--;
-                             }
-                        }
-
-                        if (ny < groundY) {
-                            let corners: number[][] = [];
-                            let normal: number[] = [];
-                            if (dirX === 1) { corners = [[1, 0, 1], [1, 0, 0], [1, 1, 1], [1, 1, 0]]; normal = [1, 0, 0]; } 
-                            else if (dirX === -1) { corners = [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1]]; normal = [-1, 0, 0]; } 
-                            else if (dirZ === 1) { corners = [[0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1]]; normal = [0, 0, 1]; } 
-                            else { corners = [[1, 0, 0], [0, 0, 0], [1, 1, 0], [0, 1, 0]]; normal = [0, 0, -1]; }
-                            addQuad(false, [x, groundY, z], corners, normal, uSide, vSide, ny + 1);
-                        }
-                    };
+                const isFaceVisible = (dx: number, dy: number, dz: number) => {
+                    const t = getBlock(x + dx, y + dy, z + dz);
+                    const tDef = getBlockDef(t);
                     
-                    checkNeighbor(x + 1, z, 1, 0);
-                    checkNeighbor(x - 1, z, -1, 0);
-                    checkNeighbor(x, z + 1, 0, 1);
-                    checkNeighbor(x, z - 1, 0, -1);
-                }
+                    const tIsWater = t === BlockType.WATER || t === BlockType.SEAGRASS;
 
-                const startScan = Math.max(0, groundY + 1);
-                for (let y = startScan; y < WORLD_HEIGHT; y++) {
-                    const type = getBlock(x, y, z);
-                    if (type === BlockType.AIR) continue;
-                    if (isWater(type)) continue;
-
-                    if (isSprite(type)) {
-                        const [u, v] = getUVOffset(type, [0, 1, 0]);
-                        addCross(x, y, z, u, v);
-                    } 
-                    else if (isBlockFeature(type)) {
-                        const [u, v] = getUVOffset(type, [0, 1, 0]);
-                        const [uS, vS] = getUVOffset(type, [1, 0, 0]);
-                        
-                        const isExposed = (dx: number, dy: number, dz: number) => {
-                             const t = getBlock(x+dx, y+dy, z+dz);
-                             return t === BlockType.AIR || isSprite(t) || isWater(t);
-                        };
-
-                        if (isExposed(0, 1, 0)) addQuad(false, [x, y, z], [[0, 1, 1], [1, 1, 1], [0, 1, 0], [1, 1, 0]], [0, 1, 0], u, v);
-                        if (isExposed(0, -1, 0)) addQuad(false, [x, y, z], [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1]], [0, -1, 0], u, v);
-                        if (isExposed(0, 0, 1)) addQuad(false, [x, y, z], [[0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1]], [0, 0, 1], uS, vS);
-                        if (isExposed(0, 0, -1)) addQuad(false, [x, y, z], [[1, 0, 0], [0, 0, 0], [1, 1, 0], [0, 1, 0]], [0, 0, -1], uS, vS);
-                        if (isExposed(1, 0, 0)) addQuad(false, [x, y, z], [[1, 0, 1], [1, 0, 0], [1, 1, 1], [1, 1, 0]], [1, 0, 0], uS, vS);
-                        if (isExposed(-1, 0, 0)) addQuad(false, [x, y, z], [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1]], [-1, 0, 0], uS, vS);
+                    if (t === BlockType.AIR) return true;
+                    if (isBlockWater) {
+                         if (tIsWater) return false;
+                         if (tDef.isSolid && !tDef.isTransparent) return false; 
+                         return true;
                     }
+                    if (tIsWater) return true; 
+                    if (tDef.isTransparent && !isBlockFoliage) return true;
+                    if (tDef.isSprite) return true; 
+                    if (!tDef.isSolid) return true;
+                    if (isBlockFoliage && t === type) return false; 
+                    return false;
+                };
+
+                const [uTop, vTop] = getUVOffset(volumeType, [0, 1, 0]);
+                const [uBot, vBot] = getUVOffset(volumeType, [0, -1, 0]);
+                const [uSide, vSide] = getUVOffset(volumeType, [1, 0, 0]);
+
+                // Calc random rotation hash for Top/Bottom faces
+                const rot = (x * 13 ^ z * 23) & 3;
+
+                if (isFaceVisible(0, 1, 0)) {
+                    const wh = isBlockWater ? 0.8 : 1;
+                    addQuad(targetType, [x, y, z], [[0, wh, 1], [1, wh, 1], [0, wh, 0], [1, wh, 0]], [0, 1, 0], uTop, vTop, true, rot);
                 }
-            }
-        }
-    } 
-    // === LOD 0: FULL VOXEL MESH ===
-    else {
-        for (let x = 0; x < CHUNK_SIZE; x++) {
-            for (let y = 0; y < WORLD_HEIGHT; y++) {
-                for (let z = 0; z < CHUNK_SIZE; z++) {
-                    const type = chunk.data[(x * WORLD_HEIGHT + y) * CHUNK_SIZE + z];
-                    if (type === BlockType.AIR) continue;
-                    
-                    if (isSprite(type)) {
-                        const [u, v] = getUVOffset(type, [0, 1, 0]);
-                        addCross(x, y, z, u, v);
-                    }
-
-                    const isWaterBlock = isWaterOrUnderwaterPlant(type);
-
-                    if (isSprite(type) && !isWaterBlock) continue;
-                    if (!isWaterBlock && isSprite(type)) continue; 
-
-                    const isSolid = (dx: number, dy: number, dz: number) => {
-                        const t = getBlock(x + dx, y + dy, z + dz);
-                        const tDef = getBlockDef(t);
-                        
-                        if (isWaterBlock) {
-                            // Cull against water or solids
-                            if (isWaterOrUnderwaterPlant(t)) return true;
-                            if (isGround(t)) return true;
-                            return false;
-                        } else {
-                            // Normal block logic
-                            if (isWaterOrUnderwaterPlant(t)) return false;
-                            // Cull against other solid blocks (but not transparent ones like leaves)
-                            if (tDef.isSolid && !tDef.isTransparent) return true;
-                            return false;
-                        }
-                    };
-
-                    const textureType = isWaterBlock ? BlockType.WATER : type;
-                    const [u, v] = getUVOffset(textureType, [0, 1, 0]);
-                    const [uBottom, vBottom] = getUVOffset(textureType, [0, -1, 0]);
-                    const [uS, vS] = getUVOffset(textureType, [1, 0, 0]);
-
-                    if (!isSolid(0, 1, 0)) {
-                        // Top Face
-                        if (isWaterBlock) {
-                             const wh = WATER_HEIGHT_OFFSET;
-                             addQuad(true, [x, y, z], [[0, wh, 1], [1, wh, 1], [0, wh, 0], [1, wh, 0]], [0, 1, 0], u, v);
-                        } else {
-                             addQuad(isWaterBlock, [x, y, z], [[0, 1, 1], [1, 1, 1], [0, 1, 0], [1, 1, 0]], [0, 1, 0], u, v);
-                        }
-                    }
-                    if (!isSolid(0, -1, 0)) addQuad(isWaterBlock, [x, y, z], [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1]], [0, -1, 0], uBottom, vBottom);
-                    if (!isSolid(0, 0, 1)) addQuad(isWaterBlock, [x, y, z], [[0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1]], [0, 0, 1], uS, vS);
-                    if (!isSolid(0, 0, -1)) addQuad(isWaterBlock, [x, y, z], [[1, 0, 0], [0, 0, 0], [1, 1, 0], [0, 1, 0]], [0, 0, -1], uS, vS);
-                    if (!isSolid(1, 0, 0)) addQuad(isWaterBlock, [x, y, z], [[1, 0, 1], [1, 0, 0], [1, 1, 1], [1, 1, 0]], [1, 0, 0], uS, vS);
-                    if (!isSolid(-1, 0, 0)) addQuad(isWaterBlock, [x, y, z], [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1]], [-1, 0, 0], uS, vS);
-                }
+                if (isFaceVisible(0, -1, 0)) addQuad(targetType, [x, y, z], [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1]], [0, -1, 0], uBot, vBot, true, rot);
+                
+                // Sides usually do not rotate
+                if (isFaceVisible(0, 0, 1)) addQuad(targetType, [x, y, z], [[0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1]], [0, 0, 1], uSide, vSide);
+                if (isFaceVisible(0, 0, -1)) addQuad(targetType, [x, y, z], [[1, 0, 0], [0, 0, 0], [1, 1, 0], [0, 1, 0]], [0, 0, -1], uSide, vSide);
+                if (isFaceVisible(1, 0, 0)) addQuad(targetType, [x, y, z], [[1, 0, 1], [1, 0, 0], [1, 1, 1], [1, 1, 0]], [1, 0, 0], uSide, vSide);
+                if (isFaceVisible(-1, 0, 0)) addQuad(targetType, [x, y, z], [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1]], [-1, 0, 0], uSide, vSide);
             }
         }
     }
 
-    const createGeo = (data: { positions: number[], normals: number[], uvs: number[], indices: number[] }) => {
-        const bufferGeometry = new THREE.BufferGeometry();
-        bufferGeometry.setAttribute('position', new THREE.Float32BufferAttribute(data.positions, 3));
-        bufferGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(data.normals, 3));
-        bufferGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(data.uvs, 2));
-        bufferGeometry.setIndex(data.indices);
-        bufferGeometry.computeBoundingSphere();
-        return bufferGeometry;
+    const createGeo = (data: any, hasColor: boolean) => {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(data.positions, 3));
+        geo.setAttribute('normal', new THREE.Float32BufferAttribute(data.normals, 3));
+        geo.setAttribute('uv', new THREE.Float32BufferAttribute(data.uvs, 2));
+        if (hasColor) geo.setAttribute('color', new THREE.Float32BufferAttribute(data.colors, 3));
+        geo.setIndex(data.indices);
+        return geo;
     };
     
-    return { opaque: createGeo(opaque), transparent: createGeo(transparent) };
+    return { 
+        opaque: createGeo(opaque, true), 
+        foliage: createGeo(foliage, true),
+        water: createGeo(water, false)
+    };
   }, [chunk, lodLevel, neighbors]);
 
   return (
@@ -325,27 +353,34 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors }) => 
         >
             <meshStandardMaterial 
                 map={globalTexture} 
-                roughness={0.9} 
+                vertexColors
+                roughness={0.8} 
                 metalness={0.1}
-                side={THREE.DoubleSide} 
-                alphaTest={0.5}
-                transparent={false}
             />
         </mesh>
+
         <mesh 
-            geometry={transGeo}
-            castShadow={false}
+            geometry={foliage}
+            castShadow={lodLevel === 0}
             receiveShadow={lodLevel === 0}
         >
             <meshStandardMaterial 
                 map={globalTexture} 
-                roughness={0.05} 
-                metalness={0.2}
-                side={THREE.DoubleSide} 
+                vertexColors
+                alphaTest={0.3}
                 transparent={true}
-                opacity={0.65}
-                depthWrite={false} 
+                side={THREE.DoubleSide}
+                roughness={0.8}
             />
+        </mesh>
+
+        <mesh geometry={water} receiveShadow={lodLevel === 0}>
+             <shaderMaterial 
+                ref={materialRef}
+                attach="material"
+                {...WaterShaderMaterial}
+                transparent={true}
+             />
         </mesh>
     </group>
   );
@@ -361,4 +396,3 @@ const arePropsEqual = (prev: ChunkMeshProps, next: ChunkMeshProps) => {
 };
 
 export default React.memo(ChunkMesh, arePropsEqual);
-    
