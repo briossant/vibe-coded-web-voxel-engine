@@ -19,6 +19,8 @@ export interface ChunkData {
   x: number;
   z: number;
   data: Uint8Array; // Flat array for voxel data
+  heightMap: Int16Array; // 16x16 surface height map
+  topLayer: Uint8Array; // 16x16 surface block ID map
   averageHeight: number; // Pre-calculated for fast LOD2 rendering
   biome: string; // For DistantTerrain material selection
   isDirty: boolean;

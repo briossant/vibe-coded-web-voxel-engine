@@ -432,7 +432,11 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
         />
       ))}
 
-      <DistantTerrain chunks={lowDetailChunks} />
+      <DistantTerrain 
+          chunks={lowDetailChunks} 
+          playerPosition={playerPos}
+          renderDistance={gameState.renderDistance}
+      />
 
       <Player 
         position={playerPos} 

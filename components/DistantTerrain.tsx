@@ -1,359 +1,150 @@
 
-import React, { useLayoutEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import * as THREE from 'three';
-import { ChunkData } from '../types';
-import { CHUNK_SIZE, WATER_LEVEL } from '../constants';
-
-const COLORS = {
-    WATER: new THREE.Color('#0288d1'),
-    GRASS: new THREE.Color('#388e3c'),
-    FOREST: new THREE.Color('#2e7d32'),
-    SAND: new THREE.Color('#fbc02d'),
-    STONE: new THREE.Color('#757575'),
-    SNOW: new THREE.Color('#ECEFF1'),
-    FLOWER: new THREE.Color('#43A047'), 
-    TREE_OAK: new THREE.Color('#2E7D32'),
-    TREE_BIRCH: new THREE.Color('#66BB6A'),
-    TREE_SPRUCE: new THREE.Color('#1B5E20'),
-};
-
-const WATER_HEIGHT_OFFSET = 0.875;
+import { ChunkData, Vector3 } from '../types';
+import { CHUNK_SIZE } from '../constants';
+import { BLOCK_DEFINITIONS } from '../blocks';
 
 interface DistantTerrainProps {
   chunks: ChunkData[];
+  playerPosition: Vector3;
+  renderDistance: number;
 }
 
-const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
-  const landMeshRef = useRef<THREE.InstancedMesh>(null);
-  const waterMeshRef = useRef<THREE.InstancedMesh>(null);
-  const treeMeshRef = useRef<THREE.InstancedMesh>(null);
-  
-  // Create materials safely within useMemo
-  const { landMaterial, waterMaterial, waterUniforms } = useMemo(() => {
-        const wUniforms = { uTime: { value: 0 } };
-        
-        // --- LAND MATERIAL ---
-        const lMat = new THREE.MeshStandardMaterial({
-            roughness: 1.0,
-            metalness: 0.0,
-            vertexColors: false, // IMPORTANT: Must be false because Geometry has no colors, InstancedMesh handles instanceColor via USE_INSTANCING_COLOR
-        });
+const _color = new THREE.Color();
+const _matrix = new THREE.Matrix4();
+const _position = new THREE.Vector3();
+const _scale = new THREE.Vector3();
+const _quaternion = new THREE.Quaternion();
 
-        lMat.onBeforeCompile = (shader) => {
-            // Inject varying declaration at the top
-            shader.vertexShader = `
-                varying vec3 vWorldPos;
-                ${shader.vertexShader}
-            `;
+// Pre-compute colors. Ensure fallback for missing definitions.
+const BLOCK_COLORS = new Array(256).fill(null).map((_, i) => {
+    const def = BLOCK_DEFINITIONS[i];
+    if (!def) return new THREE.Color('#ff00ff'); // Error magenta
+    return new THREE.Color(def.mapColor);
+});
 
-            // Manually calculate world position for the varying
-            // We do this after begin_vertex where 'transformed' is defined
-            shader.vertexShader = shader.vertexShader.replace(
-                '#include <begin_vertex>',
-                `
-                #include <begin_vertex>
-                #ifdef USE_INSTANCING
-                    vWorldPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
-                #else
-                    vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-                #endif
-                `
-            );
+const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition, renderDistance }) => {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  // Max instance count estimate: (ExtraDistance / AvgStep)^2
+  // 250,000 is plenty for reasonable settings.
+  const maxCount = 250000; 
 
-            shader.fragmentShader = `
-                varying vec3 vWorldPos;
-                ${shader.fragmentShader}
-            `;
-
-            shader.fragmentShader = shader.fragmentShader.replace(
-                '#include <common>',
-                `
-                #include <common>
-                
-                float hash(vec2 p) {
-                    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
-                }
-                
-                float noise(vec2 p) {
-                    vec2 i = floor(p);
-                    vec2 f = fract(p);
-                    f = f * f * (3.0 - 2.0 * f);
-                    return mix(mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), f.x),
-                            mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
-                }
-                `
-            );
-
-            shader.fragmentShader = shader.fragmentShader.replace(
-                '#include <color_fragment>',
-                `
-                #include <color_fragment>
-                
-                // Modulo to keep precision high for noise function
-                vec2 noisePos = mod(vWorldPos.xz, 10000.0);
-
-                float n = noise(noisePos * 0.15); 
-                float n2 = noise(noisePos * 0.02); 
-                
-                float grain = 0.85 + 0.15 * n;
-                grain *= (0.9 + 0.2 * n2);
-                
-                diffuseColor.rgb *= grain;
-                
-                // Fake AO for sides/depth
-                if (vWorldPos.y < ${WATER_LEVEL}.0 + 3.0) {
-                    float factor = smoothstep(${WATER_LEVEL}.0, ${WATER_LEVEL}.0 + 3.0, vWorldPos.y);
-                    diffuseColor.rgb *= (0.75 + 0.25 * factor);
-                }
-                `
-            );
-        };
-
-        // --- WATER MATERIAL ---
-        const wMat = new THREE.MeshStandardMaterial({
-            color: COLORS.WATER,
-            roughness: 0.1,
-            metalness: 0.1,
-            transparent: true,
-            opacity: 0.75,
-            side: THREE.DoubleSide,
-        });
-
-        wMat.onBeforeCompile = (shader) => {
-            shader.uniforms.uTime = wUniforms.uTime;
-            
-            shader.vertexShader = `
-                uniform float uTime;
-                varying vec3 vWorldPos;
-                ${shader.vertexShader}
-            `;
-
-            shader.vertexShader = shader.vertexShader.replace(
-                '#include <begin_vertex>',
-                `
-                #include <begin_vertex>
-                
-                // Calculate approximate world pos for wave logic
-                #ifdef USE_INSTANCING
-                    vec3 waveWorldPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
-                #else
-                    vec3 waveWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-                #endif
-                
-                float wave = sin(waveWorldPos.x * 0.5 + uTime) * 0.2 + cos(waveWorldPos.z * 0.4 + uTime * 0.8) * 0.2;
-                transformed.y += wave;
-
-                // Update vWorldPos after wave modification
-                // Note: This uses the modified 'transformed' position, effectively applying the wave to the worldpos varying too
-                #ifdef USE_INSTANCING
-                    vWorldPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
-                #else
-                    vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-                #endif
-                `
-            );
-            
-            shader.fragmentShader = `
-                varying vec3 vWorldPos;
-                ${shader.fragmentShader}
-            `;
-
-            shader.fragmentShader = shader.fragmentShader.replace(
-                '#include <color_fragment>',
-                `
-                #include <color_fragment>
-                float nW = sin(vWorldPos.x * 0.1) * cos(vWorldPos.z * 0.1);
-                diffuseColor.rgb += nW * 0.05;
-                `
-            );
-        };
-
-        return { landMaterial: lMat, waterMaterial: wMat, waterUniforms: wUniforms };
-  }, []);
-
-  // Animation loop
-  React.useEffect(() => {
-      let frameId: number;
-      const animate = () => {
-          waterUniforms.uTime.value = performance.now() / 1000;
-          frameId = requestAnimationFrame(animate);
-      };
-      animate();
-      return () => cancelAnimationFrame(frameId);
-  }, [waterUniforms]);
-
-  const waterGeometry = useMemo(() => {
-      const geo = new THREE.PlaneGeometry(1, 1, 4, 4); 
-      geo.rotateX(-Math.PI / 2);
-      return geo;
-  }, []);
-
-  const { landChunks, waterChunks, totalTrees } = useMemo(() => {
-      const land: ChunkData[] = [];
-      const water: ChunkData[] = [];
-      let treeCount = 0;
-      
-      chunks.forEach(c => {
-          if (c.biome === 'ocean' || c.biome === 'river') {
-              water.push(c);
-          }
-          land.push(c);
-          if (c.trees) {
-              treeCount += c.trees.length;
-          }
-      });
-      return { landChunks: land, waterChunks: water, totalTrees: treeCount };
-  }, [chunks]);
-
-  // Update Land Mesh
-  useLayoutEffect(() => {
-    if (!landMeshRef.current) return;
-    const count = landChunks.length;
-    landMeshRef.current.count = count;
-    if (count === 0) return;
-
-    const dummy = new THREE.Object3D();
-    const color = new THREE.Color();
-
-    for (let i = 0; i < count; i++) {
-      const chunk = landChunks[i];
-      
-      dummy.scale.set(CHUNK_SIZE, Math.max(1, chunk.averageHeight), CHUNK_SIZE);
-      dummy.position.set(
-        chunk.x * CHUNK_SIZE + CHUNK_SIZE / 2, 
-        Math.max(1, chunk.averageHeight) / 2, 
-        chunk.z * CHUNK_SIZE + CHUNK_SIZE / 2
-      );
-      dummy.updateMatrix();
-      landMeshRef.current.setMatrixAt(i, dummy.matrix);
-
-      // Color Logic
-      if (chunk.biome === 'desert') color.copy(COLORS.SAND);
-      else if (chunk.biome === 'mountain') {
-           if (chunk.averageHeight > 90) color.copy(COLORS.SNOW);
-           else color.copy(COLORS.STONE);
-      }
-      else if (chunk.biome === 'forest') color.copy(COLORS.FOREST);
-      else if (chunk.biome === 'flower_hill') color.copy(COLORS.FLOWER);
-      else if (chunk.biome === 'ocean') color.copy(COLORS.SAND);
-      else if (chunk.biome === 'mesa') color.copy(COLORS.SAND);
-      else color.copy(COLORS.GRASS);
-
-      color.multiplyScalar(0.9); 
-      landMeshRef.current.setColorAt(i, color);
-    }
-    landMeshRef.current.instanceMatrix.needsUpdate = true;
-    if (landMeshRef.current.instanceColor) landMeshRef.current.instanceColor.needsUpdate = true;
-  }, [landChunks]);
-
-  // Update Water Mesh
-  useLayoutEffect(() => {
-    if (!waterMeshRef.current) return;
-    const count = waterChunks.length;
-    waterMeshRef.current.count = count;
-    if (count === 0) return;
-
-    const dummy = new THREE.Object3D();
-    const surfaceY = WATER_LEVEL + WATER_HEIGHT_OFFSET;
+  // Use a simple Box geometry with origin at bottom-center for easier scaling
+  const { geometry, material } = useMemo(() => {
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    geo.translate(0, 0.5, 0); 
     
-    for (let i = 0; i < count; i++) {
-      const chunk = waterChunks[i];
-      dummy.scale.set(CHUNK_SIZE, 1, CHUNK_SIZE);
-      dummy.position.set(
-        chunk.x * CHUNK_SIZE + CHUNK_SIZE / 2, 
-        surfaceY, 
-        chunk.z * CHUNK_SIZE + CHUNK_SIZE / 2
-      );
-      dummy.updateMatrix();
-      waterMeshRef.current.setMatrixAt(i, dummy.matrix);
+    // Use MeshBasicMaterial to avoid lighting issues (black chunks) on distant geometry
+    // VertexColors allows each instance to have its own color
+    const mat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      toneMapped: false, 
+    });
+    return { geometry: geo, material: mat };
+  }, []);
+
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    // CRITICAL: Explicitly create instanceColor attribute if it doesn't exist or if buffer needs resize
+    if (!mesh.instanceColor || mesh.instanceColor.count < maxCount) {
+        mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(maxCount * 3), 3);
     }
-    waterMeshRef.current.instanceMatrix.needsUpdate = true;
-  }, [waterChunks]);
 
-  // Update Tree Mesh
-  useLayoutEffect(() => {
-      if (!treeMeshRef.current) return;
-      treeMeshRef.current.count = totalTrees;
-      if (totalTrees === 0) return;
+    const pChunkX = Math.floor(playerPosition[0] / CHUNK_SIZE);
+    const pChunkZ = Math.floor(playerPosition[2] / CHUNK_SIZE);
 
-      const dummy = new THREE.Object3D();
-      const color = new THREE.Color();
-      let idx = 0;
+    let index = 0;
 
-      for (const chunk of chunks) {
-          if (!chunk.trees) continue;
-          
-          const startX = chunk.x * CHUNK_SIZE;
-          const startZ = chunk.z * CHUNK_SIZE;
+    for (const chunk of chunks) {
+        // Robustness check: data must be present
+        if (!chunk.heightMap || !chunk.topLayer) continue;
 
-          for (const tree of chunk.trees) {
-              const wx = startX + tree.x;
-              const wy = tree.y;
-              const wz = startZ + tree.z;
+        const distX = chunk.x - pChunkX;
+        const distZ = chunk.z - pChunkZ;
+        const dist = Math.sqrt(distX*distX + distZ*distZ);
+        
+        // Calculate LOD step based on distance relative to the render edge
+        // Dist is in Chunks.
+        const relativeDist = dist - renderDistance;
+        
+        let step = 1; // Default full resolution
+        
+        // Gradually increase cube size (step) as distance increases
+        if (relativeDist > 2) step = 2;
+        if (relativeDist > 6) step = 4;
+        if (relativeDist > 12) step = 8;
+        if (relativeDist > 20) step = 16;
 
-              let height = 5;
-              let width = 1.2;
-              
-              if (tree.type === 2) { // Spruce
-                  height = 7;
-                  color.copy(COLORS.TREE_SPRUCE);
-              } else if (tree.type === 1) { // Birch
-                  height = 6;
-                  color.copy(COLORS.TREE_BIRCH);
-              } else { // Oak
-                  color.copy(COLORS.TREE_OAK);
-              }
+        // Iterate over the chunk in steps
+        for (let x = 0; x < CHUNK_SIZE; x += step) {
+            for (let z = 0; z < CHUNK_SIZE; z += step) {
+                if (index >= maxCount) break;
 
-              // Simple rotation
-              const rot = (wx * 13 + wz * 7) % 6.28;
-              dummy.rotation.set(0, rot, 0);
+                // Sample center of the LOD block for better accuracy
+                const sampleX = Math.min(x + Math.floor(step/2), CHUNK_SIZE - 1);
+                const sampleZ = Math.min(z + Math.floor(step/2), CHUNK_SIZE - 1);
+                const idx = sampleX * CHUNK_SIZE + sampleZ;
+                
+                const h = chunk.heightMap[idx];
+                const type = chunk.topLayer[idx];
 
-              dummy.position.set(wx + 0.5, wy + height/2, wz + 0.5);
-              dummy.scale.set(width, height, width);
-              dummy.updateMatrix();
+                if (type === 0) continue; // Skip Air
 
-              treeMeshRef.current.setMatrixAt(idx, dummy.matrix);
-              treeMeshRef.current.setColorAt(idx, color);
-              idx++;
-          }
-      }
-      treeMeshRef.current.instanceMatrix.needsUpdate = true;
-      if (treeMeshRef.current.instanceColor) treeMeshRef.current.instanceColor.needsUpdate = true;
-  }, [chunks, totalTrees]);
+                const wx = (chunk.x * CHUNK_SIZE) + x;
+                const wz = (chunk.z * CHUNK_SIZE) + z;
+
+                // GAP PREVENTION:
+                // Instead of a small cube, render a "pillar" that extends downwards.
+                // This ensures that even on steep cliffs, there are no gaps between this LOD block
+                // and the one below it or next to it.
+                // We extend down to y=0 (or near it) because overdraw is cheap with BasicMaterial.
+                const topY = h + 1;
+                const bottomY = 0; 
+                const height = topY - bottomY;
+
+                _position.set(wx + step / 2, bottomY, wz + step / 2);
+                // Add slight overlap (0.05) to prevent stitching artifacts/lines between cubes
+                _scale.set(step + 0.05, height, step + 0.05);
+                _quaternion.identity();
+                _matrix.compose(_position, _quaternion, _scale);
+
+                // Color Logic
+                const baseColor = BLOCK_COLORS[type] || BLOCK_COLORS[0];
+                _color.copy(baseColor);
+                
+                // Fake Depth/Height Shading
+                // Since we use BasicMaterial (unlit), we manually darken lower blocks 
+                // to simulate depth and atmosphere.
+                const brightness = 0.5 + (h / 384) * 0.5; 
+                _color.multiplyScalar(brightness);
+
+                // Set Matrix and Color
+                mesh.setMatrixAt(index, _matrix);
+                mesh.setColorAt(index, _color);
+                
+                index++;
+            }
+        }
+        if (index >= maxCount) break;
+    }
+    
+    mesh.count = index;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+
+  }, [chunks, playerPosition, renderDistance, maxCount]);
 
   return (
-    <group>
-        {/* Land */}
-        <instancedMesh 
-        ref={landMeshRef} 
-        args={[undefined, undefined, landChunks.length]}
+    <instancedMesh 
+        ref={meshRef} 
+        args={[geometry, material, maxCount]} 
         frustumCulled={false}
-        >
-            <boxGeometry args={[1, 1, 1]} />
-            <primitive object={landMaterial} attach="material" />
-        </instancedMesh>
-
-        {/* Water */}
-        <instancedMesh 
-        ref={waterMeshRef} 
-        args={[undefined, undefined, waterChunks.length]}
-        geometry={waterGeometry}
-        frustumCulled={false}
-        >
-             <primitive object={waterMaterial} attach="material" />
-        </instancedMesh>
-
-        {/* Trees */}
-        <instancedMesh
-          ref={treeMeshRef}
-          args={[undefined, undefined, totalTrees]}
-          frustumCulled={false}
-        >
-            <boxGeometry args={[1, 1, 1]} />
-            <meshStandardMaterial roughness={0.9} metalness={0} />
-        </instancedMesh>
-    </group>
+    />
   );
 };
 
+// Memoize to prevent re-renders unless chunks array ref changes
 export default React.memo(DistantTerrain);

@@ -459,6 +459,27 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
         }
     }
 
+    // 3. COMPUTE FINAL HEIGHTMAP & TOPLAYER for Distant Terrain (LOD)
+    const finalHeightMap = new Int16Array(CHUNK_SIZE * CHUNK_SIZE);
+    const finalTopLayer = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+
+    for (let x=0; x<CHUNK_SIZE; x++) {
+       for (let z=0; z<CHUNK_SIZE; z++) {
+           // Find top block
+           let y = WORLD_HEIGHT - 1;
+           let blk = chunkBuffer[getIndex(x,y,z)];
+           
+           // Optimized search down
+           while(y > 0 && blk === BLOCKS.AIR) {
+               y--;
+               blk = chunkBuffer[getIndex(x,y,z)];
+           }
+           
+           finalHeightMap[x*CHUNK_SIZE+z] = y;
+           finalTopLayer[x*CHUNK_SIZE+z] = blk;
+       }
+    }
+
     // Determine dominant biome
     let domB = 'plain';
     if (biomeCounts[BIOMES.OCEAN] > 50) domB = 'ocean';
@@ -473,6 +494,8 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
 
     return {
         data: chunkBuffer,
+        heightMap: finalHeightMap,
+        topLayer: finalTopLayer,
         averageHeight: avgH,
         biome: domB,
         trees

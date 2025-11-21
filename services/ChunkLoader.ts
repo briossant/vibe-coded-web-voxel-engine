@@ -83,6 +83,14 @@ self.onmessage = function(e) {
     if (msg.type === 'GENERATE') {
         const { cx, cz } = msg;
         const result = computeChunk(ctx, cx, cz);
+        
+        // Prepare transfer list to avoid cloning large buffers
+        const transfer = [
+            result.data.buffer, 
+            result.heightMap.buffer, 
+            result.topLayer.buffer
+        ];
+
         self.postMessage({
             type: 'CHUNK',
             chunk: {
@@ -90,22 +98,21 @@ self.onmessage = function(e) {
                 x: cx,
                 z: cz,
                 data: result.data,
+                heightMap: result.heightMap,
+                topLayer: result.topLayer,
                 averageHeight: result.averageHeight,
                 biome: result.biome,
                 isDirty: false,
                 trees: result.trees
             }
-        }, [result.data.buffer]);
+        }, transfer);
     } 
     else if (msg.type === 'MESH') {
         const { chunkData, neighbors, reqId } = msg;
         
-        // chunkData is a Uint8Array
-        // neighbors contains { nx, px, nz, pz } which are Uint8Array or null
         const mesh = computeChunkMesh(ctx, chunkData, neighbors);
         
         const buffers = [];
-        // Helper to collect buffers for transfer
         const add = (geo) => {
              if (geo.positions.buffer) buffers.push(geo.positions.buffer);
              if (geo.normals.buffer) buffers.push(geo.normals.buffer);
@@ -144,7 +151,10 @@ export class ChunkLoader {
        const msg = e.data;
        if (msg.type === 'CHUNK') {
            const chunk = msg.chunk;
-           chunk.data = new Uint8Array(chunk.data); 
+           // Reconstruct TypedArrays from the transferred buffers
+           chunk.data = new Uint8Array(chunk.data);
+           chunk.heightMap = new Int16Array(chunk.heightMap);
+           chunk.topLayer = new Uint8Array(chunk.topLayer);
            this.onChunkLoaded(chunk);
        } else if (msg.type === 'MESH') {
            const cb = this.meshCallbacks.get(msg.reqId);
