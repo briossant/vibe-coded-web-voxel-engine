@@ -96,23 +96,3 @@ declare global {
     }
   }
 }
-
-// Augment React's internal JSX namespace for compatibility with strict configurations
-declare module 'react' {
-  namespace JSX {
-    interface IntrinsicElements {
-      group: any;
-      mesh: any;
-      meshStandardMaterial: any;
-      instancedMesh: any;
-      boxGeometry: any;
-      primitive: any;
-      ambientLight: any;
-      directionalLight: any;
-      hemisphereLight: any;
-      color: any;
-      fogExp2: any;
-      [elemName: string]: any;
-    }
-  }
-}

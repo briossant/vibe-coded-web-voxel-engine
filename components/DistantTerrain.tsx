@@ -152,10 +152,28 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
                 const sampleZ = Math.min(z + Math.floor(step/2), CHUNK_SIZE - 1);
                 const idx = sampleX * CHUNK_SIZE + sampleZ;
                 
-                const h = chunk.heightMap[idx];
-                const type = chunk.topLayer[idx];
+                let h = chunk.heightMap[idx];
+                let type = chunk.topLayer[idx];
 
                 if (type === 0) continue;
+
+                // EXCLUSION LOGIC: Treat sprites as the block underneath
+                // Prevents flowers/grass from rendering as giant colored cubes
+                const def = BLOCK_DEFINITIONS[type];
+                if (def?.isSprite) {
+                    h -= 1; // Lower height to ground level
+                    if (h < 0) continue; // Safety check
+
+                    // Guess ground type
+                    if (type === BlockType.DEAD_BUSH) {
+                        type = BlockType.SAND;
+                    } else if (type === BlockType.SEAGRASS) {
+                        type = BlockType.WATER;
+                    } else {
+                        // Default to Grass for flowers/tall grass
+                        type = BlockType.GRASS;
+                    }
+                }
 
                 const wx = (chunk.x * CHUNK_SIZE) + x;
                 const wz = (chunk.z * CHUNK_SIZE) + z;

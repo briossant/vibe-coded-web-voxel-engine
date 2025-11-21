@@ -269,7 +269,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
         // Unload chunks outside of total range + buffer
         const radius = gameState.renderDistance + gameState.extraRenderDistance + 4; 
 
-        setChunks(prev => {
+        setChunks((prev: Map<string, ChunkData>) => {
             let changed = false;
             for(const key of prev.keys()) {
                 const [kx, kz] = key.split(',').map(Number);
@@ -344,7 +344,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
      const cx = Math.floor(x / CHUNK_SIZE);
      const cz = Math.floor(z / CHUNK_SIZE);
      
-     setChunks(prev => {
+     setChunks((prev: Map<string, ChunkData>) => {
          const newMap = new Map(prev);
          const key = `${cx},${cz}`;
          const chunk = newMap.get(key);

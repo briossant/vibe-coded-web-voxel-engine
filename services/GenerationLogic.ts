@@ -504,8 +504,16 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
 
 export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, neighbors: any) {
     const { 
-        CHUNK_SIZE, WORLD_HEIGHT, BLOCK_DEFINITIONS, TEXTURE_ATLAS_SIZE, ROTATABLE_SIDES_LIST, AO_INTENSITY 
+        CHUNK_SIZE, WORLD_HEIGHT, BLOCK_DEFINITIONS, TEXTURE_ATLAS_SIZE, ROTATABLE_SIDES_LIST, AO_INTENSITY, BLOCKS 
     } = ctx;
+
+    const LEAF_IDS = new Set<number>([
+        BLOCKS.OAK_LEAVES, 
+        BLOCKS.BIRCH_LEAVES, 
+        BLOCKS.SPRUCE_LEAVES, 
+        BLOCKS.ACACIA_LEAVES,
+        BLOCKS.JUNGLE_LEAVES
+    ]);
 
     const ROTATABLE_SIDES = new Set(ROTATABLE_SIDES_LIST);
 
@@ -663,21 +671,39 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
         else foliageCount += 4;
     };
     
-    const addCross = (x: number, y: number, z: number, uStart: number, vStart: number) => {
+    // Modified addCross with Scale parameter for bushy leaves
+    const addCross = (x: number, y: number, z: number, uStart: number, vStart: number, scale: number = 1.0) => {
         const u0 = uStart + 0.001;
         const u1 = uStart + uW - 0.001;
         const v0 = vStart;
         const v1 = vStart + vH;
         const ao = 1.0; 
 
-        foliage.positions.push(x, y, z, x+1, y, z+1, x, y+1, z, x+1, y+1, z+1);
+        // Calculate offsets based on scale (centered at +0.5)
+        const offset = (scale - 1.0) / 2;
+        const min = -offset;
+        const max = 1 + offset;
+
+        // Plane 1 (Diagonal A)
+        foliage.positions.push(
+            x + min, y + min, z + min, 
+            x + max, y + min, z + max, 
+            x + min, y + max, z + min, 
+            x + max, y + max, z + max
+        );
         foliage.normals.push(0.7,0,0.7, 0.7,0,0.7, 0.7,0,0.7, 0.7,0,0.7);
         foliage.uvs.push(u0, v0, u1, v0, u0, v1, u1, v1);
         foliage.colors!.push(ao,ao,ao, ao,ao,ao, ao,ao,ao, ao,ao,ao);
         foliage.indices.push(foliageCount, foliageCount+1, foliageCount+2, foliageCount+1, foliageCount+3, foliageCount+2);
         foliageCount += 4;
 
-        foliage.positions.push(x, y, z+1, x+1, y, z, x, y+1, z+1, x+1, y+1, z);
+        // Plane 2 (Diagonal B)
+        foliage.positions.push(
+            x + min, y + min, z + max, 
+            x + max, y + min, z + min, 
+            x + min, y + max, z + max, 
+            x + max, y + max, z + min
+        );
         foliage.normals.push(-0.7,0,0.7, -0.7,0,0.7, -0.7,0,0.7, -0.7,0,0.7);
         foliage.uvs.push(u0, v0, u1, v0, u0, v1, u1, v1);
         foliage.colors!.push(ao,ao,ao, ao,ao,ao, ao,ao,ao, ao,ao,ao);
@@ -692,17 +718,25 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
                 if (type === 0) continue; // AIR
                 
                 const typeDef = getBlockDef(type);
-                const isSeagrass = type === 34; // SEAGRASS ID check directly if blocks not in scope
+                const isSeagrass = type === 34; 
                 
-                // 1. Render Sprites
+                // 1. Render 'Bushy' Cross for Leaves
+                // We render this IN ADDITION to the block volume for a very dense, bushy look
+                if (LEAF_IDS.has(type)) {
+                    const [u, v] = getUVOffset(type, [1, 0, 0]); // Use side texture
+                    // Scale 1.3 makes the leaves stick out and overlap neighbors slightly
+                    addCross(x, y, z, u, v, 1.3);
+                }
+                
+                // 2. Render Sprites (Flowers, Grass)
                 if (typeDef.isSprite) {
                     const [u, v] = getUVOffset(type, [0, 1, 0]);
-                    addCross(x, y, z, u, v);
+                    addCross(x, y, z, u, v, 1.0);
                     if (!isSeagrass) continue;
                 }
 
-                // 2. Volume Rendering
-                const isBlockWater = type === 6 || isSeagrass; // 6 is WATER
+                // 3. Volume Rendering (Cubes)
+                const isBlockWater = type === 6 || isSeagrass; 
                 const volumeType = isBlockWater ? 6 : type;
                 const isBlockFoliage = typeDef.isTransparent && !isBlockWater && !isSeagrass;
                 const targetType = isBlockWater ? 'water' : (isBlockFoliage ? 'foliage' : 'opaque');
@@ -711,7 +745,7 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
                     const t = getBlock(x + dx, y + dy, z + dz);
                     const tDef = getBlockDef(t);
                     
-                    const tIsWater = t === 6 || t === 34; // WATER or SEAGRASS
+                    const tIsWater = t === 6 || t === 34; 
 
                     if (t === 0) return true;
                     if (isBlockWater) {
@@ -751,7 +785,6 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
     }
     
     // Convert standard arrays to TypedArrays for Transferable support
-    // This eliminates cloning overhead when sending data back to main thread
     const toBuffers = (obj: any) => {
         return {
             positions: new Float32Array(obj.positions),
