@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Sky, Stats, Stars } from '@react-three/drei';
@@ -213,7 +212,9 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
       const [px, , pz] = playerPos;
       const centerCX = Math.floor(px / CHUNK_SIZE);
       const centerCZ = Math.floor(pz / CHUNK_SIZE);
-      const maxRadius = gameState.renderDistance;
+      
+      // Total loaded radius covers both high res and low res chunks
+      const maxRadius = gameState.renderDistance + gameState.extraRenderDistance;
 
       if (chunkScanRef.current.cx !== centerCX || chunkScanRef.current.cz !== centerCZ) {
           chunkScanRef.current = { cx: centerCX, cz: centerCZ, index: 0 };
@@ -264,7 +265,9 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
         const [px, , pz] = playerPos;
         const cx = Math.floor(px / CHUNK_SIZE);
         const cz = Math.floor(pz / CHUNK_SIZE);
-        const radius = gameState.renderDistance + 4; 
+        
+        // Unload chunks outside of total range + buffer
+        const radius = gameState.renderDistance + gameState.extraRenderDistance + 4; 
 
         setChunks(prev => {
             let changed = false;
@@ -288,7 +291,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
         });
      }, 2000);
      return () => clearInterval(interval);
-  }, [playerPos, gameState.renderDistance, setChunks]);
+  }, [playerPos, gameState.renderDistance, gameState.extraRenderDistance, setChunks]);
 
   const playerChunkX = Math.floor(playerPos[0] / CHUNK_SIZE);
   const playerChunkZ = Math.floor(playerPos[2] / CHUNK_SIZE);
@@ -299,23 +302,28 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
       
       const cx = playerChunkX;
       const cz = playerChunkZ;
+      const highResLimit = gameState.renderDistance;
 
       for (const chunk of gameState.chunks.values()) {
           const dx = Math.abs(chunk.x - cx);
           const dz = Math.abs(chunk.z - cz);
           const dist = Math.max(dx, dz); 
           
-          if (dist < 3) { // Increased LOD0 range slightly
-              high.push({ chunk, lod: 0 });
-          } else if (dist < 16) {
-              high.push({ chunk, lod: 1 });
+          if (dist <= highResLimit) {
+              // Within high res distance: Use LOD 0 or 1 based on close proximity
+              if (dist < 4) {
+                  high.push({ chunk, lod: 0 });
+              } else {
+                  high.push({ chunk, lod: 1 });
+              }
           } else {
+              // Outside high res distance: Use DistantTerrain
               low.push(chunk);
           }
       }
 
       return { highDetailChunks: high, lowDetailChunks: low };
-  }, [gameState.chunks, playerChunkX, playerChunkZ]);
+  }, [gameState.chunks, playerChunkX, playerChunkZ, gameState.renderDistance]);
 
   const getChunk = useCallback((x: number, z: number) => gameState.chunks.get(`${x},${z}`), [gameState.chunks]);
 

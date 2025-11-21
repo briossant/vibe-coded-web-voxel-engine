@@ -1,11 +1,9 @@
-
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import Game from './components/Game';
 import HUD from './components/HUD';
 import Inventory from './components/Inventory';
 import { GameState, ChunkData, Vector3 } from './types';
 import { BlockType } from './blocks';
-import { DEFAULT_RENDER_DISTANCE } from './constants';
 import { noise } from './utils/noise';
 
 const App: React.FC = () => {
@@ -14,7 +12,11 @@ const App: React.FC = () => {
   
   const [chunks, setChunks] = useState<Map<string, ChunkData>>(new Map());
   const [playerPosition, setPlayerPosition] = useState<Vector3>([0, 80, 0]);
-  const [renderDistance, setRenderDistance] = useState<number>(DEFAULT_RENDER_DISTANCE);
+  
+  // Dual Render Distance Settings
+  const [renderDistance, setRenderDistance] = useState<number>(12); // High Res
+  const [extraRenderDistance, setExtraRenderDistance] = useState<number>(20); // Low Res
+
   const [debugMode, setDebugMode] = useState<boolean>(false);
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
   const [isUnderwater, setIsUnderwater] = useState<boolean>(false);
@@ -28,10 +30,10 @@ const App: React.FC = () => {
       BlockType.OAK_LOG, 
       BlockType.OAK_LEAVES, 
       BlockType.SAND, 
-      BlockType.WATER, // Replaced GLASS with WATER placeholder
-      BlockType.TULIP_RED, // Replaced TORCH with TULIP_RED placeholder
+      BlockType.WATER, 
+      BlockType.TULIP_RED, 
       BlockType.CORNFLOWER
-  ].map(id => id || BlockType.STONE).slice(0, 9)); // Ensure valid IDs
+  ].map(id => id || BlockType.STONE).slice(0, 9)); 
   
   const [activeHotbarSlot, setActiveHotbarSlot] = useState<number>(0);
 
@@ -47,14 +49,9 @@ const App: React.FC = () => {
   // Handle Hotbar Keys (1-9) and Inventory Key (E)
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
-          // Prevent default browser actions for F-keys or similar if needed
-          
           // Inventory Toggle
           if (e.code === 'KeyE') {
-              // If user is typing in search, ignore 'E'? handled in input element, but careful of event bubbling.
-              // We can check document.activeElement
               if (document.activeElement?.tagName === 'INPUT') return;
-
               setInventoryOpen(prev => !prev);
           }
           if (e.code === 'Escape') {
@@ -90,6 +87,7 @@ const App: React.FC = () => {
     chunks,
     playerPosition,
     renderDistance,
+    extraRenderDistance,
     seed,
     isMenuOpen,
     debugMode,
@@ -97,6 +95,7 @@ const App: React.FC = () => {
     toggleMenu,
     toggleDebug,
     updateRenderDistance: setRenderDistance,
+    updateExtraRenderDistance: setExtraRenderDistance,
     getBlock: noopGetBlock, // Overridden in Game
     setBlock: noopSetBlock,  // Overridden in Game
     
@@ -108,7 +107,7 @@ const App: React.FC = () => {
     activeHotbarSlot,
     setActiveHotbarSlot,
     selectedBlock: hotbar[activeHotbarSlot],
-    setSelectedBlock: handleBlockSelect // Use selection handler for inventory clicks
+    setSelectedBlock: handleBlockSelect 
   };
 
   // Extended State for HUD

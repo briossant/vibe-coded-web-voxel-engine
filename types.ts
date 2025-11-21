@@ -29,6 +29,7 @@ export interface GameState {
   chunks: Map<string, ChunkData>;
   playerPosition: Vector3;
   renderDistance: number;
+  extraRenderDistance: number; // Distance for low-res distant terrain
   seed: number;
   isMenuOpen: boolean;
   debugMode: boolean;
@@ -49,6 +50,7 @@ export interface GameState {
   toggleMenu: () => void;
   toggleDebug: () => void;
   updateRenderDistance: (dist: number) => void;
+  updateExtraRenderDistance: (dist: number) => void;
   getBlock: (x: number, y: number, z: number) => number;
   setBlock: (x: number, y: number, z: number, type: number) => void;
 }

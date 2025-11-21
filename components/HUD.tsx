@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { GameState } from '../types';
 import { MAX_RENDER_DISTANCE } from '../constants';
@@ -14,6 +13,8 @@ const HUD: React.FC<HUDProps> = ({ gameState }) => {
       playerPosition, 
       renderDistance, 
       updateRenderDistance, 
+      updateExtraRenderDistance,
+      extraRenderDistance,
       toggleDebug, 
       debugMode, 
       seed, 
@@ -51,13 +52,26 @@ const HUD: React.FC<HUDProps> = ({ gameState }) => {
                     {debugMode ? 'Hide Stats' : 'Show Stats'}
                 </button>
             </div>
+            
+            {/* Render Distance Sliders */}
             <div className="mt-2">
                 <label className="block text-[10px] text-gray-300">Render Distance ({renderDistance})</label>
                 <input 
                     type="range" 
-                    min="8" max={MAX_RENDER_DISTANCE} 
+                    min="8" max="64" 
                     value={renderDistance} 
                     onChange={(e) => updateRenderDistance(parseInt(e.target.value))}
+                    className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer mt-1"
+                />
+            </div>
+            
+             <div className="mt-2">
+                <label className="block text-[10px] text-gray-300">Extra Render Distance ({extraRenderDistance})</label>
+                <input 
+                    type="range" 
+                    min="0" max="64" 
+                    value={extraRenderDistance} 
+                    onChange={(e) => updateExtraRenderDistance(parseInt(e.target.value))}
                     className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer mt-1"
                 />
             </div>
