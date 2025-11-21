@@ -242,8 +242,9 @@ const createAtlas = () => {
   fill(44, '#9FA8DA', 0.15);
 
   const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestMipmapLinearFilter; // Improved filtering
   tex.magFilter = THREE.NearestFilter;
+  tex.generateMipmaps = true;
   tex.colorSpace = THREE.SRGBColorSpace;
   
   return { tex, url: canvas.toDataURL() };

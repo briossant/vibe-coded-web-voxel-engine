@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Sky, Stats, Stars } from '@react-three/drei';
 import * as THREE from 'three';
 import { Vector3, ChunkData, GameState } from '../types';
@@ -10,6 +11,7 @@ import DistantTerrain from './DistantTerrain';
 import Player from './Player';
 import { CHUNK_SIZE, WORLD_HEIGHT, MAX_RENDER_DISTANCE } from '../constants';
 import { ChunkLoader } from '../services/ChunkLoader';
+import { globalTexture } from '../utils/textures';
 
 interface GameProps {
   gameState: GameState;
@@ -166,6 +168,16 @@ const SkyBox = () => {
             <Stars radius={200} depth={50} count={5000} factor={4} fade />
         </group>
     );
+};
+
+const TextureManager = () => {
+    const { gl } = useThree();
+    useEffect(() => {
+        const maxAnisotropy = gl.capabilities.getMaxAnisotropy();
+        globalTexture.anisotropy = maxAnisotropy;
+        globalTexture.needsUpdate = true;
+    }, [gl]);
+    return null;
 };
 
 const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
@@ -374,6 +386,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
 
   return (
     <>
+      <TextureManager />
       <color attach="background" args={['#87CEEB']} />
       
       <Sky 
