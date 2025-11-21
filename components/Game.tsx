@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Sky, Stats, Stars, Cloud } from '@react-three/drei';
+import { Sky, Stats, Stars } from '@react-three/drei';
 import * as THREE from 'three';
 import { Vector3, ChunkData, GameState } from '../types';
 import { BlockType } from '../blocks';
@@ -21,15 +22,135 @@ interface GameSceneProps {
   setChunks: React.Dispatch<React.SetStateAction<Map<string, ChunkData>>>;
 }
 
-// Procedural Clouds Component
-const ProceduralClouds = () => {
+// --- Custom Cloud Shader ---
+// Uses world position for UVs so clouds stay pinned to the world while the plane follows the player
+const CloudShaderMaterial = {
+    uniforms: {
+        uTime: { value: 0 },
+        uColor: { value: new THREE.Color('#ffffff') },
+        uCloudScale: { value: 0.008 },
+        uCloudSpeed: { value: 0.02 },
+        uOpacity: { value: 0.8 },
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vWorldPos;
+        
+        void main() {
+            vUv = uv;
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vWorldPos = worldPosition.xyz;
+            gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        }
+    `,
+    fragmentShader: `
+        uniform float uTime;
+        uniform vec3 uColor;
+        uniform float uCloudScale;
+        uniform float uCloudSpeed;
+        uniform float uOpacity;
+        varying vec3 vWorldPos;
+
+        // Simple noise function
+        float hash(vec2 p) {
+            p = fract(p * vec2(123.34, 456.21));
+            p += dot(p, p + 45.32);
+            return fract(p.x * p.y);
+        }
+
+        float noise(vec2 p) {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            f = f * f * (3.0 - 2.0 * f);
+            float a = hash(i + vec2(0.0, 0.0));
+            float b = hash(i + vec2(1.0, 0.0));
+            float c = hash(i + vec2(0.0, 1.0));
+            float d = hash(i + vec2(1.0, 1.0));
+            return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+        }
+
+        float fbm(vec2 p) {
+            float total = 0.0;
+            float amp = 0.5;
+            for (int i = 0; i < 5; i++) {
+                total += noise(p) * amp;
+                p *= 2.1;
+                amp *= 0.5;
+            }
+            return total;
+        }
+
+        void main() {
+            // Animate noise with time
+            vec2 pos = vWorldPos.xz * uCloudScale;
+            pos.x += uTime * uCloudSpeed;
+            pos.y += uTime * uCloudSpeed * 0.5;
+
+            float n = fbm(pos);
+
+            // Threshold to create cloud shapes
+            float alpha = smoothstep(0.4, 0.8, n);
+            
+            // Discard clear sky for performance
+            if (alpha < 0.01) discard;
+
+            gl_FragColor = vec4(uColor, alpha * uOpacity);
+        }
+    `
+};
+
+const CloudLayer = () => {
+    const materialRef = useRef<THREE.ShaderMaterial>(null);
+    const meshRef = useRef<THREE.Mesh>(null);
+    const materialRef2 = useRef<THREE.ShaderMaterial>(null);
+    const meshRef2 = useRef<THREE.Mesh>(null);
+
+    useFrame(({ clock, camera }) => {
+        const t = clock.getElapsedTime();
+        if (materialRef.current) materialRef.current.uniforms.uTime.value = t;
+        if (materialRef2.current) materialRef2.current.uniforms.uTime.value = t + 100;
+
+        // Keep cloud plane centered on player
+        if (meshRef.current) {
+            meshRef.current.position.set(camera.position.x, 280, camera.position.z);
+        }
+        if (meshRef2.current) {
+            meshRef2.current.position.set(camera.position.x, 310, camera.position.z);
+        }
+    });
+
+    const planeSize = MAX_RENDER_DISTANCE * CHUNK_SIZE * 2.5;
+
     return (
-        <group position={[0, 150, 0]}>
-            <Cloud position={[-100, 0, -100]} opacity={0.5} speed={0.2} bounds={[20, 2, 10]} segments={20} />
-            <Cloud position={[100, 20, 100]} opacity={0.5} speed={0.2} bounds={[20, 2, 10]} segments={20} />
-            <Cloud position={[50, -10, -50]} opacity={0.4} speed={0.2} bounds={[30, 2, 10]} segments={20} />
-            <Cloud position={[-50, 10, 50]} opacity={0.6} speed={0.2} bounds={[30, 2, 10]} segments={20} />
-        </group>
+        <>
+            {/* Lower Layer */}
+            <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]}>
+                <planeGeometry args={[planeSize, planeSize]} />
+                <shaderMaterial 
+                    ref={materialRef}
+                    attach="material"
+                    {...CloudShaderMaterial}
+                    transparent
+                    depthWrite={false} 
+                    uniforms-uCloudScale-value={0.006}
+                    uniforms-uOpacity-value={0.8}
+                />
+            </mesh>
+            {/* Upper Layer (Parallax) */}
+            <mesh ref={meshRef2} rotation={[-Math.PI / 2, 0, 0]}>
+                <planeGeometry args={[planeSize, planeSize]} />
+                <shaderMaterial 
+                    ref={materialRef2}
+                    attach="material"
+                    {...CloudShaderMaterial}
+                    transparent
+                    depthWrite={false}
+                    uniforms-uCloudScale-value={0.003}
+                    uniforms-uOpacity-value={0.5}
+                    uniforms-uCloudSpeed-value={0.01}
+                />
+            </mesh>
+        </>
     );
 };
 
@@ -261,7 +382,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
       {/* Improved Fog matching Sky color better */}
       <fogExp2 attach="fog" args={[isUnderwater ? '#00334d' : '#B3D9FF', isUnderwater ? 0.08 : 0.0015]} />
       
-      <ProceduralClouds />
+      <CloudLayer />
 
       {/* 
         Lighting Setup:

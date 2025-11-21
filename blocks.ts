@@ -38,6 +38,7 @@ export const BlockType = {
   BLUE_ORCHID: 33,
   SEAGRASS: 34,
   SEA_LANTERN: 35,
+  CLAY: 36,
 } as const;
 
 // Helper to create simple blocks
@@ -128,6 +129,7 @@ export const BLOCK_DEFINITIONS: Record<number, BlockDefinition> = {
   [BlockType.SEAGRASS]: plant(BlockType.SEAGRASS, 'Seagrass', 42, '#388E3C'),
   
   [BlockType.SEA_LANTERN]: simple(BlockType.SEA_LANTERN, 'Sea Lantern', 'Building', 43, '#E0F7FA', { lightLevel: 15 }),
+  [BlockType.CLAY]: simple(BlockType.CLAY, 'Clay', 'Nature', 44, '#9FA8DA'),
 };
 
 export const getBlockDef = (id: number) => BLOCK_DEFINITIONS[id] || BLOCK_DEFINITIONS[BlockType.AIR];

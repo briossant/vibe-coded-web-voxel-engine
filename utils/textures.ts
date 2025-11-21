@@ -207,6 +207,9 @@ const createAtlas = () => {
   ctx.fillRect(43*TILE_SIZE + 2, 2, 12, 12);
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(43*TILE_SIZE + 5, 5, 6, 6);
+  
+  // 44: Clay
+  fill(44, '#9FA8DA', 0.15);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.minFilter = THREE.NearestFilter;

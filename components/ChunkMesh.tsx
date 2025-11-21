@@ -1,3 +1,4 @@
+
 import React, { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
@@ -14,6 +15,24 @@ interface ChunkMeshProps {
       n_nxnz?: ChunkData; n_pxnz?: ChunkData; n_nxpz?: ChunkData; n_pxpz?: ChunkData;
   };
 }
+
+// Blocks that look good with random rotation on their side faces (isotropic textures)
+const ROTATABLE_SIDES = new Set<number>([
+  BlockType.DIRT,
+  BlockType.STONE,
+  BlockType.SAND,
+  BlockType.GRAVEL,
+  BlockType.BEDROCK,
+  BlockType.SNOW,
+  BlockType.OAK_LEAVES,
+  BlockType.BIRCH_LEAVES,
+  BlockType.SPRUCE_LEAVES,
+  BlockType.ACACIA_LEAVES,
+  BlockType.JUNGLE_LEAVES,
+  BlockType.RED_SAND,
+  BlockType.WATER,
+  BlockType.CLAY
+]);
 
 // --- Shader for Water ---
 const WaterShaderMaterial = {
@@ -310,19 +329,28 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors }) => 
                 const [uSide, vSide] = getUVOffset(volumeType, [1, 0, 0]);
 
                 // Calc random rotation hash for Top/Bottom faces
-                const rot = (x * 13 ^ z * 23) & 3;
+                // Top/Bottom often looks good rotated for most natural blocks
+                const rotTop = (x * 13 ^ z * 23) & 3;
+                
+                // Side rotation must include Y to avoid vertical striping patterns
+                const rotSide = (x * 17 ^ y * 29 ^ z * 7) & 3;
+                
+                // Only apply side rotation to isotropic noise blocks (dirt, stone, etc)
+                // Do not apply to Grass (side), Logs, or Sandstone which are directional
+                const canRotateSide = ROTATABLE_SIDES.has(volumeType);
+                const effectiveSideRot = canRotateSide ? rotSide : 0;
 
                 if (isFaceVisible(0, 1, 0)) {
                     const wh = isBlockWater ? 0.8 : 1;
-                    addQuad(targetType, [x, y, z], [[0, wh, 1], [1, wh, 1], [0, wh, 0], [1, wh, 0]], [0, 1, 0], uTop, vTop, true, rot);
+                    addQuad(targetType, [x, y, z], [[0, wh, 1], [1, wh, 1], [0, wh, 0], [1, wh, 0]], [0, 1, 0], uTop, vTop, true, rotTop);
                 }
-                if (isFaceVisible(0, -1, 0)) addQuad(targetType, [x, y, z], [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1]], [0, -1, 0], uBot, vBot, true, rot);
+                if (isFaceVisible(0, -1, 0)) addQuad(targetType, [x, y, z], [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1]], [0, -1, 0], uBot, vBot, true, rotTop);
                 
-                // Sides usually do not rotate
-                if (isFaceVisible(0, 0, 1)) addQuad(targetType, [x, y, z], [[0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1]], [0, 0, 1], uSide, vSide);
-                if (isFaceVisible(0, 0, -1)) addQuad(targetType, [x, y, z], [[1, 0, 0], [0, 0, 0], [1, 1, 0], [0, 1, 0]], [0, 0, -1], uSide, vSide);
-                if (isFaceVisible(1, 0, 0)) addQuad(targetType, [x, y, z], [[1, 0, 1], [1, 0, 0], [1, 1, 1], [1, 1, 0]], [1, 0, 0], uSide, vSide);
-                if (isFaceVisible(-1, 0, 0)) addQuad(targetType, [x, y, z], [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1]], [-1, 0, 0], uSide, vSide);
+                // Sides using effectiveSideRot
+                if (isFaceVisible(0, 0, 1)) addQuad(targetType, [x, y, z], [[0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1]], [0, 0, 1], uSide, vSide, true, effectiveSideRot);
+                if (isFaceVisible(0, 0, -1)) addQuad(targetType, [x, y, z], [[1, 0, 0], [0, 0, 0], [1, 1, 0], [0, 1, 0]], [0, 0, -1], uSide, vSide, true, effectiveSideRot);
+                if (isFaceVisible(1, 0, 0)) addQuad(targetType, [x, y, z], [[1, 0, 1], [1, 0, 0], [1, 1, 1], [1, 1, 0]], [1, 0, 0], uSide, vSide, true, effectiveSideRot);
+                if (isFaceVisible(-1, 0, 0)) addQuad(targetType, [x, y, z], [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1]], [-1, 0, 0], uSide, vSide, true, effectiveSideRot);
             }
         }
     }

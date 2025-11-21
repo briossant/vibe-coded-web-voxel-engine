@@ -11,14 +11,12 @@ const COLORS = {
     SAND: new THREE.Color('#fbc02d'),
     STONE: new THREE.Color('#757575'),
     SNOW: new THREE.Color('#ECEFF1'),
-    FLOWER: new THREE.Color('#43A047'), // Bright green
-    
+    FLOWER: new THREE.Color('#43A047'), 
     TREE_OAK: new THREE.Color('#2E7D32'),
     TREE_BIRCH: new THREE.Color('#66BB6A'),
     TREE_SPRUCE: new THREE.Color('#1B5E20'),
 };
 
-// Match ChunkMesh water offset
 const WATER_HEIGHT_OFFSET = 0.875;
 
 interface DistantTerrainProps {
@@ -29,10 +27,163 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
   const landMeshRef = useRef<THREE.InstancedMesh>(null);
   const waterMeshRef = useRef<THREE.InstancedMesh>(null);
   const treeMeshRef = useRef<THREE.InstancedMesh>(null);
+  
+  // Create materials safely within useMemo
+  const { landMaterial, waterMaterial, waterUniforms } = useMemo(() => {
+        const wUniforms = { uTime: { value: 0 } };
+        
+        // --- LAND MATERIAL ---
+        const lMat = new THREE.MeshStandardMaterial({
+            roughness: 1.0,
+            metalness: 0.0,
+            vertexColors: false, // IMPORTANT: Must be false because Geometry has no colors, InstancedMesh handles instanceColor via USE_INSTANCING_COLOR
+        });
 
-  // Create a plane geometry for water to only show the top face
+        lMat.onBeforeCompile = (shader) => {
+            // Inject varying declaration at the top
+            shader.vertexShader = `
+                varying vec3 vWorldPos;
+                ${shader.vertexShader}
+            `;
+
+            // Manually calculate world position for the varying
+            // We do this after begin_vertex where 'transformed' is defined
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <begin_vertex>',
+                `
+                #include <begin_vertex>
+                #ifdef USE_INSTANCING
+                    vWorldPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
+                #else
+                    vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+                #endif
+                `
+            );
+
+            shader.fragmentShader = `
+                varying vec3 vWorldPos;
+                ${shader.fragmentShader}
+            `;
+
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <common>',
+                `
+                #include <common>
+                
+                float hash(vec2 p) {
+                    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+                }
+                
+                float noise(vec2 p) {
+                    vec2 i = floor(p);
+                    vec2 f = fract(p);
+                    f = f * f * (3.0 - 2.0 * f);
+                    return mix(mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), f.x),
+                            mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+                }
+                `
+            );
+
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <color_fragment>',
+                `
+                #include <color_fragment>
+                
+                // Modulo to keep precision high for noise function
+                vec2 noisePos = mod(vWorldPos.xz, 10000.0);
+
+                float n = noise(noisePos * 0.15); 
+                float n2 = noise(noisePos * 0.02); 
+                
+                float grain = 0.85 + 0.15 * n;
+                grain *= (0.9 + 0.2 * n2);
+                
+                diffuseColor.rgb *= grain;
+                
+                // Fake AO for sides/depth
+                if (vWorldPos.y < ${WATER_LEVEL}.0 + 3.0) {
+                    float factor = smoothstep(${WATER_LEVEL}.0, ${WATER_LEVEL}.0 + 3.0, vWorldPos.y);
+                    diffuseColor.rgb *= (0.75 + 0.25 * factor);
+                }
+                `
+            );
+        };
+
+        // --- WATER MATERIAL ---
+        const wMat = new THREE.MeshStandardMaterial({
+            color: COLORS.WATER,
+            roughness: 0.1,
+            metalness: 0.1,
+            transparent: true,
+            opacity: 0.75,
+            side: THREE.DoubleSide,
+        });
+
+        wMat.onBeforeCompile = (shader) => {
+            shader.uniforms.uTime = wUniforms.uTime;
+            
+            shader.vertexShader = `
+                uniform float uTime;
+                varying vec3 vWorldPos;
+                ${shader.vertexShader}
+            `;
+
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <begin_vertex>',
+                `
+                #include <begin_vertex>
+                
+                // Calculate approximate world pos for wave logic
+                #ifdef USE_INSTANCING
+                    vec3 waveWorldPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
+                #else
+                    vec3 waveWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+                #endif
+                
+                float wave = sin(waveWorldPos.x * 0.5 + uTime) * 0.2 + cos(waveWorldPos.z * 0.4 + uTime * 0.8) * 0.2;
+                transformed.y += wave;
+
+                // Update vWorldPos after wave modification
+                // Note: This uses the modified 'transformed' position, effectively applying the wave to the worldpos varying too
+                #ifdef USE_INSTANCING
+                    vWorldPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
+                #else
+                    vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+                #endif
+                `
+            );
+            
+            shader.fragmentShader = `
+                varying vec3 vWorldPos;
+                ${shader.fragmentShader}
+            `;
+
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <color_fragment>',
+                `
+                #include <color_fragment>
+                float nW = sin(vWorldPos.x * 0.1) * cos(vWorldPos.z * 0.1);
+                diffuseColor.rgb += nW * 0.05;
+                `
+            );
+        };
+
+        return { landMaterial: lMat, waterMaterial: wMat, waterUniforms: wUniforms };
+  }, []);
+
+  // Animation loop
+  React.useEffect(() => {
+      let frameId: number;
+      const animate = () => {
+          waterUniforms.uTime.value = performance.now() / 1000;
+          frameId = requestAnimationFrame(animate);
+      };
+      animate();
+      return () => cancelAnimationFrame(frameId);
+  }, [waterUniforms]);
+
   const waterGeometry = useMemo(() => {
-      const geo = new THREE.PlaneGeometry(1, 1);
+      const geo = new THREE.PlaneGeometry(1, 1, 4, 4); 
       geo.rotateX(-Math.PI / 2);
       return geo;
   }, []);
@@ -46,10 +197,7 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
           if (c.biome === 'ocean' || c.biome === 'river') {
               water.push(c);
           }
-          
-          // Always render land for all chunks (seabed or ground)
           land.push(c);
-          
           if (c.trees) {
               treeCount += c.trees.length;
           }
@@ -57,7 +205,7 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
       return { landChunks: land, waterChunks: water, totalTrees: treeCount };
   }, [chunks]);
 
-  // --- Land Rendering ---
+  // Update Land Mesh
   useLayoutEffect(() => {
     if (!landMeshRef.current) return;
     const count = landChunks.length;
@@ -70,7 +218,6 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
     for (let i = 0; i < count; i++) {
       const chunk = landChunks[i];
       
-      // Scale height to average height
       dummy.scale.set(CHUNK_SIZE, Math.max(1, chunk.averageHeight), CHUNK_SIZE);
       dummy.position.set(
         chunk.x * CHUNK_SIZE + CHUNK_SIZE / 2, 
@@ -80,7 +227,7 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
       dummy.updateMatrix();
       landMeshRef.current.setMatrixAt(i, dummy.matrix);
 
-      // Determine Color
+      // Color Logic
       if (chunk.biome === 'desert') color.copy(COLORS.SAND);
       else if (chunk.biome === 'mountain') {
            if (chunk.averageHeight > 90) color.copy(COLORS.SNOW);
@@ -88,16 +235,18 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
       }
       else if (chunk.biome === 'forest') color.copy(COLORS.FOREST);
       else if (chunk.biome === 'flower_hill') color.copy(COLORS.FLOWER);
-      else if (chunk.biome === 'ocean') color.copy(COLORS.SAND); // Seabed is sand
-      else color.copy(COLORS.GRASS); // Plain
+      else if (chunk.biome === 'ocean') color.copy(COLORS.SAND);
+      else if (chunk.biome === 'mesa') color.copy(COLORS.SAND);
+      else color.copy(COLORS.GRASS);
 
+      color.multiplyScalar(0.9); 
       landMeshRef.current.setColorAt(i, color);
     }
     landMeshRef.current.instanceMatrix.needsUpdate = true;
     if (landMeshRef.current.instanceColor) landMeshRef.current.instanceColor.needsUpdate = true;
   }, [landChunks]);
 
-  // --- Water Rendering ---
+  // Update Water Mesh
   useLayoutEffect(() => {
     if (!waterMeshRef.current) return;
     const count = waterChunks.length;
@@ -105,17 +254,10 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
     if (count === 0) return;
 
     const dummy = new THREE.Object3D();
-    const color = COLORS.WATER;
-
+    const surfaceY = WATER_LEVEL + WATER_HEIGHT_OFFSET;
+    
     for (let i = 0; i < count; i++) {
       const chunk = waterChunks[i];
-      
-      // Calculate precise water surface height
-      // WATER_LEVEL is the index of the top water block.
-      // The visual surface is at index + WATER_HEIGHT_OFFSET.
-      const surfaceY = WATER_LEVEL + WATER_HEIGHT_OFFSET;
-      
-      // Flatten scale Y to 1 since it is a plane
       dummy.scale.set(CHUNK_SIZE, 1, CHUNK_SIZE);
       dummy.position.set(
         chunk.x * CHUNK_SIZE + CHUNK_SIZE / 2, 
@@ -124,13 +266,11 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
       );
       dummy.updateMatrix();
       waterMeshRef.current.setMatrixAt(i, dummy.matrix);
-      waterMeshRef.current.setColorAt(i, color);
     }
     waterMeshRef.current.instanceMatrix.needsUpdate = true;
-    if (waterMeshRef.current.instanceColor) waterMeshRef.current.instanceColor.needsUpdate = true;
   }, [waterChunks]);
 
-  // --- Tree Rendering ---
+  // Update Tree Mesh
   useLayoutEffect(() => {
       if (!treeMeshRef.current) return;
       treeMeshRef.current.count = totalTrees;
@@ -164,6 +304,10 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
                   color.copy(COLORS.TREE_OAK);
               }
 
+              // Simple rotation
+              const rot = (wx * 13 + wz * 7) % 6.28;
+              dummy.rotation.set(0, rot, 0);
+
               dummy.position.set(wx + 0.5, wy + height/2, wz + 0.5);
               dummy.scale.set(width, height, width);
               dummy.updateMatrix();
@@ -173,37 +317,30 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
               idx++;
           }
       }
-      
       treeMeshRef.current.instanceMatrix.needsUpdate = true;
       if (treeMeshRef.current.instanceColor) treeMeshRef.current.instanceColor.needsUpdate = true;
   }, [chunks, totalTrees]);
 
   return (
-    <>
-        {/* Land/Seabed Layer */}
+    <group>
+        {/* Land */}
         <instancedMesh 
         ref={landMeshRef} 
         args={[undefined, undefined, landChunks.length]}
         frustumCulled={false}
         >
             <boxGeometry args={[1, 1, 1]} />
-            <meshStandardMaterial roughness={1} metalness={0} />
+            <primitive object={landMaterial} attach="material" />
         </instancedMesh>
 
-        {/* Water Layer - Uses PlaneGeometry via prop to only show top face */}
+        {/* Water */}
         <instancedMesh 
         ref={waterMeshRef} 
         args={[undefined, undefined, waterChunks.length]}
         geometry={waterGeometry}
         frustumCulled={false}
         >
-            <meshStandardMaterial 
-                roughness={0.1} 
-                metalness={0.1} 
-                transparent={true} 
-                opacity={0.6}
-                side={THREE.DoubleSide} // Plane is single sided by default, ensure it is visible from below if diving
-            />
+             <primitive object={waterMaterial} attach="material" />
         </instancedMesh>
 
         {/* Trees */}
@@ -213,9 +350,9 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks }) => {
           frustumCulled={false}
         >
             <boxGeometry args={[1, 1, 1]} />
-            <meshStandardMaterial roughness={0.8} metalness={0} />
+            <meshStandardMaterial roughness={0.9} metalness={0} />
         </instancedMesh>
-    </>
+    </group>
   );
 };
 
