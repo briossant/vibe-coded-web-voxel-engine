@@ -78,7 +78,9 @@ const createAtlas = () => {
   // -- PALETTE UPDATES (Less Saturation, More Earthy) --
   
   // 0: Error
-  fill(0, '#ff00ff', 0);
+  // Use transparent/empty instead of magenta to prevent purple bleeding in mipmaps
+  ctx.clearRect(0, 0, TILE_SIZE, TILE_SIZE);
+
   // 1: Dirt (Darker brown)
   fill(1, '#5D4037', 0.15); 
   // 2: Grass Side
@@ -242,7 +244,8 @@ const createAtlas = () => {
   fill(44, '#9FA8DA', 0.15);
 
   const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.NearestMipmapLinearFilter; // Improved filtering
+  // Use LinearMipmapLinearFilter (Trilinear) to smooth out distant noise
+  tex.minFilter = THREE.LinearMipmapLinearFilter; 
   tex.magFilter = THREE.NearestFilter;
   tex.generateMipmaps = true;
   tex.colorSpace = THREE.SRGBColorSpace;
