@@ -178,7 +178,6 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
   // New state for underwater effect
   const [isUnderwater, setIsUnderwater] = useState(false);
   
-  const loaderRef = useRef<ChunkLoader | null>(null);
   const pendingChunks = useRef<Set<string>>(new Set());
   
   const spiralRef = useRef({ x: 0, y: 0, dx: 0, dy: -1 });
@@ -186,6 +185,19 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
 
   const lightRef = useRef<THREE.DirectionalLight>(null);
   const lightTarget = useMemo(() => new THREE.Object3D(), []);
+
+  // Instantiate loader once based on seed
+  const chunkLoader = useMemo(() => {
+    return new ChunkLoader(gameState.seed, (chunk) => {
+        setChunks(prev => new Map(prev).set(chunk.id, chunk));
+        pendingChunks.current.delete(chunk.id);
+    });
+  }, [gameState.seed, setChunks]);
+
+  // Cleanup loader
+  useEffect(() => {
+      return () => chunkLoader.terminate();
+  }, [chunkLoader]);
 
   useFrame(({ camera }) => {
       if (lightRef.current) {
@@ -197,17 +209,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
       }
   });
 
-  useEffect(() => {
-    loaderRef.current = new ChunkLoader(gameState.seed, (chunk) => {
-        setChunks(prev => new Map(prev).set(chunk.id, chunk));
-        pendingChunks.current.delete(chunk.id);
-    });
-    return () => loaderRef.current?.terminate();
-  }, [setChunks, gameState.seed]);
-
   useFrame(() => {
-      if (!loaderRef.current) return;
-
       const [px, , pz] = playerPos;
       const centerCX = Math.floor(px / CHUNK_SIZE);
       const centerCZ = Math.floor(pz / CHUNK_SIZE);
@@ -235,7 +237,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
 
                 if (!gameState.chunks.has(id) && !pendingChunks.current.has(id)) {
                     pendingChunks.current.add(id);
-                    loaderRef.current.requestChunk(targetCX, targetCZ);
+                    chunkLoader.requestChunk(targetCX, targetCZ);
                     requestedCount++;
                 }
           }
@@ -418,6 +420,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
                 nz: getChunk(chunk.x, chunk.z - 1),
                 pz: getChunk(chunk.x, chunk.z + 1),
             }}
+            chunkLoader={chunkLoader}
         />
       ))}
 

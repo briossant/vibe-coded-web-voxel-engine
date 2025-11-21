@@ -11,6 +11,12 @@ export interface GenerationContext {
     BLOCKS: typeof BlockType;
     BIOMES: { [key: string]: number };
     
+    // Mesh Context
+    BLOCK_DEFINITIONS: any;
+    TEXTURE_ATLAS_SIZE: number;
+    AO_INTENSITY: number[];
+    ROTATABLE_SIDES_LIST: number[];
+
     // Functions injected from TerrainMath
     getTerrainInfo: (wx: number, wz: number, noise: any, wl: number, wh: number) => { h: number, biome: number, isRiver: boolean };
     noise: any; // SimplexNoise instance
@@ -470,5 +476,272 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
         averageHeight: avgH,
         biome: domB,
         trees
+    };
+}
+
+export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, neighbors: any) {
+    const { 
+        CHUNK_SIZE, WORLD_HEIGHT, BLOCK_DEFINITIONS, TEXTURE_ATLAS_SIZE, ROTATABLE_SIDES_LIST, AO_INTENSITY 
+    } = ctx;
+
+    const ROTATABLE_SIDES = new Set(ROTATABLE_SIDES_LIST);
+
+    const opaque = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[], colors: [] as number[] };
+    let opaqueCount = 0;
+    
+    const foliage = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[], colors: [] as number[] };
+    let foliageCount = 0;
+    
+    const water = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[], colors: [] as number[] };
+    let waterCount = 0;
+
+    const uW = 1 / TEXTURE_ATLAS_SIZE;
+    const vH = 1.0;
+
+    const { nx, px, nz, pz } = neighbors;
+
+    // Helper to get block from local or neighbor data
+    const getBlock = (cx: number, cy: number, cz: number) => {
+        if (cy < 0 || cy >= WORLD_HEIGHT) return 0; // AIR
+        if (cx >= 0 && cx < CHUNK_SIZE && cz >= 0 && cz < CHUNK_SIZE) {
+            return chunkData[(cx * WORLD_HEIGHT + cy) * CHUNK_SIZE + cz];
+        }
+        if (cx < 0) return nx ? nx[((cx + CHUNK_SIZE) * WORLD_HEIGHT + cy) * CHUNK_SIZE + cz] : 0;
+        if (cx >= CHUNK_SIZE) return px ? px[((cx - CHUNK_SIZE) * WORLD_HEIGHT + cy) * CHUNK_SIZE + cz] : 0;
+        if (cz < 0) return nz ? nz[(cx * WORLD_HEIGHT + cy) * CHUNK_SIZE + (cz + CHUNK_SIZE)] : 0;
+        if (cz >= CHUNK_SIZE) return pz ? pz[(cx * WORLD_HEIGHT + cy) * CHUNK_SIZE + (cz - CHUNK_SIZE)] : 0;
+        return 0;
+    };
+
+    const getBlockDef = (id: number) => BLOCK_DEFINITIONS[id] || BLOCK_DEFINITIONS[0];
+
+    const getUVOffset = (type: number, normal: number[]) => {
+       const def = getBlockDef(type);
+       if (!def) return [0,0];
+       const ny = normal[1];
+       let idx = def.textures.side;
+       if (ny > 0.5) idx = def.textures.top;
+       if (ny < -0.5) idx = def.textures.bottom;
+       return [idx / TEXTURE_ATLAS_SIZE, 0];
+    };
+
+    const isSolidForAO = (bx: number, by: number, bz: number) => {
+        const t = getBlock(bx, by, bz);
+        const def = getBlockDef(t);
+        return def.isSolid && !def.isTransparent; 
+    };
+
+    const computeAO = (x: number, y: number, z: number, normal: number[]) => {
+        const nx = normal[0], ny = normal[1], nz = normal[2];
+        const px = x + nx; const py = y + ny; const pz = z + nz;
+        const aoValues = [0,0,0,0]; 
+        const vertexAO = (s1: boolean, s2: boolean, c: boolean) => {
+            if (s1 && s2) return 3; 
+            return (s1 ? 1 : 0) + (s2 ? 1 : 0) + (c ? 1 : 0);
+        };
+
+        if (ny > 0) { // TOP
+            const nN = isSolidForAO(px, py, pz-1); 
+            const nS = isSolidForAO(px, py, pz+1); 
+            const nW = isSolidForAO(px-1, py, pz); 
+            const nE = isSolidForAO(px+1, py, pz); 
+            const nNW = isSolidForAO(px-1, py, pz-1);
+            const nNE = isSolidForAO(px+1, py, pz-1);
+            const nSW = isSolidForAO(px-1, py, pz+1);
+            const nSE = isSolidForAO(px+1, py, pz+1);
+
+            aoValues[0] = vertexAO(nW, nS, nSW);
+            aoValues[1] = vertexAO(nE, nS, nSE);
+            aoValues[2] = vertexAO(nW, nN, nNW);
+            aoValues[3] = vertexAO(nE, nN, nNE);
+        } 
+        else if (nz > 0) { // FRONT
+           const nU = isSolidForAO(px, py+1, pz);
+           const nD = isSolidForAO(px, py-1, pz);
+           const nL = isSolidForAO(px-1, py, pz);
+           const nR = isSolidForAO(px+1, py, pz);
+           const nLU = isSolidForAO(px-1, py+1, pz);
+           const nRU = isSolidForAO(px+1, py+1, pz);
+           const nLD = isSolidForAO(px-1, py-1, pz);
+           const nRD = isSolidForAO(px+1, py-1, pz);
+
+           aoValues[0] = vertexAO(nL, nU, nLU); 
+           aoValues[1] = vertexAO(nR, nU, nRU); 
+           aoValues[2] = vertexAO(nL, nD, nLD); 
+           aoValues[3] = vertexAO(nR, nD, nRD); 
+        }
+        else {
+             const nU = isSolidForAO(px, py+1, pz);
+             const nD = isSolidForAO(px, py-1, pz);
+             const aoTop = nU ? 1 : 0;
+             const aoBot = nD ? 1 : 0;
+             aoValues[0] = aoTop; aoValues[1] = aoTop;
+             aoValues[2] = aoBot; aoValues[3] = aoBot;
+        }
+        return aoValues.map(idx => AO_INTENSITY[idx]);
+    };
+
+    const addQuad = (
+        targetType: 'opaque' | 'foliage' | 'water',
+        pos: number[], 
+        corners: number[][], 
+        norm: number[], 
+        uStart: number, vStart: number,
+        calcAo: boolean = true,
+        rotation: number = 0 // 0 to 3
+    ) => {
+        const target = targetType === 'opaque' ? opaque : (targetType === 'water' ? water : foliage);
+        const baseIndex = targetType === 'opaque' ? opaqueCount : (targetType === 'water' ? waterCount : foliageCount);
+        
+        let aos = [1,1,1,1];
+        if (calcAo && targetType === 'opaque') {
+            aos = computeAO(pos[0], pos[1], pos[2], norm);
+        }
+
+        for (let i = 0; i < 4; i++) {
+            const x = pos[0] + corners[i][0];
+            const y = pos[1] + corners[i][1];
+            const z = pos[2] + corners[i][2];
+
+            target.positions.push(x, y, z);
+            target.normals.push(norm[0], norm[1], norm[2]);
+            
+            if (targetType !== 'water') {
+                const brightness = aos[i];
+                target.colors!.push(brightness, brightness, brightness);
+            }
+        }
+
+        const u0 = uStart + 0.001;
+        const u1 = uStart + uW - 0.001;
+        const v0 = vStart;
+        const v1 = vStart + vH;
+        
+        const perms = [
+            [0, 1, 2, 3], // 0 deg
+            [2, 0, 3, 1], // 90 deg
+            [3, 2, 1, 0], // 180 deg
+            [1, 3, 0, 2]  // 270 deg
+        ];
+        const p = perms[rotation % 4];
+        const uvSet = [u0, v0, u1, v0, u0, v1, u1, v1];
+
+        target.uvs.push(
+            uvSet[p[0]*2], uvSet[p[0]*2+1], 
+            uvSet[p[1]*2], uvSet[p[1]*2+1], 
+            uvSet[p[2]*2], uvSet[p[2]*2+1], 
+            uvSet[p[3]*2], uvSet[p[3]*2+1]
+        );
+
+        target.indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex + 1, baseIndex + 3, baseIndex + 2);
+        
+        if (targetType === 'opaque') opaqueCount += 4;
+        else if (targetType === 'water') waterCount += 4;
+        else foliageCount += 4;
+    };
+    
+    const addCross = (x: number, y: number, z: number, uStart: number, vStart: number) => {
+        const u0 = uStart + 0.001;
+        const u1 = uStart + uW - 0.001;
+        const v0 = vStart;
+        const v1 = vStart + vH;
+        const ao = 1.0; 
+
+        foliage.positions.push(x, y, z, x+1, y, z+1, x, y+1, z, x+1, y+1, z+1);
+        foliage.normals.push(0.7,0,0.7, 0.7,0,0.7, 0.7,0,0.7, 0.7,0,0.7);
+        foliage.uvs.push(u0, v0, u1, v0, u0, v1, u1, v1);
+        foliage.colors!.push(ao,ao,ao, ao,ao,ao, ao,ao,ao, ao,ao,ao);
+        foliage.indices.push(foliageCount, foliageCount+1, foliageCount+2, foliageCount+1, foliageCount+3, foliageCount+2);
+        foliageCount += 4;
+
+        foliage.positions.push(x, y, z+1, x+1, y, z, x, y+1, z+1, x+1, y+1, z);
+        foliage.normals.push(-0.7,0,0.7, -0.7,0,0.7, -0.7,0,0.7, -0.7,0,0.7);
+        foliage.uvs.push(u0, v0, u1, v0, u0, v1, u1, v1);
+        foliage.colors!.push(ao,ao,ao, ao,ao,ao, ao,ao,ao, ao,ao,ao);
+        foliage.indices.push(foliageCount, foliageCount+1, foliageCount+2, foliageCount+1, foliageCount+3, foliageCount+2);
+        foliageCount += 4;
+    };
+
+    for (let x = 0; x < CHUNK_SIZE; x++) {
+        for (let y = 0; y < WORLD_HEIGHT; y++) {
+            for (let z = 0; z < CHUNK_SIZE; z++) {
+                const type = chunkData[(x * WORLD_HEIGHT + y) * CHUNK_SIZE + z];
+                if (type === 0) continue; // AIR
+                
+                const typeDef = getBlockDef(type);
+                const isSeagrass = type === 34; // SEAGRASS ID check directly if blocks not in scope
+                
+                // 1. Render Sprites
+                if (typeDef.isSprite) {
+                    const [u, v] = getUVOffset(type, [0, 1, 0]);
+                    addCross(x, y, z, u, v);
+                    if (!isSeagrass) continue;
+                }
+
+                // 2. Volume Rendering
+                const isBlockWater = type === 6 || isSeagrass; // 6 is WATER
+                const volumeType = isBlockWater ? 6 : type;
+                const isBlockFoliage = typeDef.isTransparent && !isBlockWater && !isSeagrass;
+                const targetType = isBlockWater ? 'water' : (isBlockFoliage ? 'foliage' : 'opaque');
+
+                const isFaceVisible = (dx: number, dy: number, dz: number) => {
+                    const t = getBlock(x + dx, y + dy, z + dz);
+                    const tDef = getBlockDef(t);
+                    
+                    const tIsWater = t === 6 || t === 34; // WATER or SEAGRASS
+
+                    if (t === 0) return true;
+                    if (isBlockWater) {
+                         if (tIsWater) return false;
+                         if (tDef.isSolid && !tDef.isTransparent) return false; 
+                         return true;
+                    }
+                    if (tIsWater) return true; 
+                    if (tDef.isTransparent && !isBlockFoliage) return true;
+                    if (tDef.isSprite) return true; 
+                    if (!tDef.isSolid) return true;
+                    if (isBlockFoliage && t === type) return false; 
+                    return false;
+                };
+
+                const [uTop, vTop] = getUVOffset(volumeType, [0, 1, 0]);
+                const [uBot, vBot] = getUVOffset(volumeType, [0, -1, 0]);
+                const [uSide, vSide] = getUVOffset(volumeType, [1, 0, 0]);
+
+                const rotTop = (x * 13 ^ z * 23) & 3;
+                const rotSide = (x * 17 ^ y * 29 ^ z * 7) & 3;
+                const canRotateSide = ROTATABLE_SIDES.has(volumeType);
+                const effectiveSideRot = canRotateSide ? rotSide : 0;
+
+                if (isFaceVisible(0, 1, 0)) {
+                    const wh = isBlockWater ? 0.8 : 1;
+                    addQuad(targetType, [x, y, z], [[0, wh, 1], [1, wh, 1], [0, wh, 0], [1, wh, 0]], [0, 1, 0], uTop, vTop, true, rotTop);
+                }
+                if (isFaceVisible(0, -1, 0)) addQuad(targetType, [x, y, z], [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1]], [0, -1, 0], uBot, vBot, true, rotTop);
+                
+                if (isFaceVisible(0, 0, 1)) addQuad(targetType, [x, y, z], [[0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1]], [0, 0, 1], uSide, vSide, true, effectiveSideRot);
+                if (isFaceVisible(0, 0, -1)) addQuad(targetType, [x, y, z], [[1, 0, 0], [0, 0, 0], [1, 1, 0], [0, 1, 0]], [0, 0, -1], uSide, vSide, true, effectiveSideRot);
+                if (isFaceVisible(1, 0, 0)) addQuad(targetType, [x, y, z], [[1, 0, 1], [1, 0, 0], [1, 1, 1], [1, 1, 0]], [1, 0, 0], uSide, vSide, true, effectiveSideRot);
+                if (isFaceVisible(-1, 0, 0)) addQuad(targetType, [x, y, z], [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1]], [-1, 0, 0], uSide, vSide, true, effectiveSideRot);
+            }
+        }
+    }
+    
+    // Convert standard arrays to TypedArrays for Transferable support
+    // This eliminates cloning overhead when sending data back to main thread
+    const toBuffers = (obj: any) => {
+        return {
+            positions: new Float32Array(obj.positions),
+            normals: new Float32Array(obj.normals),
+            uvs: new Float32Array(obj.uvs),
+            indices: new Uint32Array(obj.indices),
+            colors: new Float32Array(obj.colors)
+        };
+    };
+
+    return {
+        opaque: toBuffers(opaque),
+        foliage: toBuffers(foliage),
+        water: toBuffers(water)
     };
 }
