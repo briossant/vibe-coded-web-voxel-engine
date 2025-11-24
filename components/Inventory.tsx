@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { BlockType, BLOCK_DEFINITIONS } from '../blocks';
+import { BlockType, getAllBlocks } from '../blocks';
 import { BlockDefinition, BlockCategory } from '../types';
 import { textureUrl } from '../utils/textures';
 
@@ -16,7 +16,8 @@ const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, onSelectBlock })
   const [activeTab, setActiveTab] = useState<BlockCategory | 'Search'>('Nature');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const allBlocks = useMemo(() => Object.values(BLOCK_DEFINITIONS).filter(b => b.id !== BlockType.AIR), []);
+  // Use the registry function
+  const allBlocks = useMemo(() => getAllBlocks().filter(b => b.id !== BlockType.AIR), []);
 
   const filteredBlocks = useMemo(() => {
     if (activeTab === 'Search') {
@@ -62,7 +63,7 @@ const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, onSelectBlock })
             <button onClick={onClose} className="text-gray-400 hover:text-white px-3">✕</button>
         </div>
 
-        {/* Search Bar (Only visible if activeTab is Search) */}
+        {/* Search Bar */}
         {activeTab === 'Search' && (
             <div className="p-3 bg-[#222]">
                 <input 
@@ -85,7 +86,6 @@ const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, onSelectBlock })
                         block={block} 
                         onClick={() => {
                             onSelectBlock(block.id);
-                            // Optional: Don't close inventory on click, standard creative mode behavior
                         }} 
                     />
                 ))}
@@ -97,7 +97,6 @@ const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, onSelectBlock })
             </div>
         </div>
         
-        {/* Footer Info */}
         <div className="bg-[#111] p-2 text-xs text-gray-500 text-center border-t border-gray-800">
              Left Click to select • Press 'E' or 'Esc' to close
         </div>
@@ -107,7 +106,7 @@ const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, onSelectBlock })
 };
 
 const BlockItem: React.FC<{ block: BlockDefinition; onClick: () => void }> = ({ block, onClick }) => {
-    const textureIndex = block.textures.side; // Use side texture for icon
+    const textureIndex = block.textures.side;
     
     return (
         <button 
@@ -115,13 +114,6 @@ const BlockItem: React.FC<{ block: BlockDefinition; onClick: () => void }> = ({ 
             className="group relative w-16 h-16 bg-[#333] hover:bg-[#444] border border-gray-700 hover:border-white rounded flex items-center justify-center transition-all"
             title={block.name}
         >
-            {/* 
-                CSS Sprite Logic:
-                background-size: 6400% means the image is 64 times wider than the container.
-                Since container is 100% width of itself, image is 6400% width.
-                One tile is 1/64th of image.
-                Offset per index is -100% * index.
-             */}
             <div 
                 className="w-10 h-10 image-pixelated"
                 style={{
@@ -133,7 +125,6 @@ const BlockItem: React.FC<{ block: BlockDefinition; onClick: () => void }> = ({ 
             <div className="absolute bottom-1 right-1 text-[10px] font-mono text-gray-400 opacity-0 group-hover:opacity-100">
                 {block.id}
             </div>
-            {/* Label on hover */}
             <div className="absolute -bottom-8 z-20 bg-black text-white text-xs px-2 py-1 rounded pointer-events-none opacity-0 group-hover:opacity-100 whitespace-nowrap">
                 {block.name}
             </div>

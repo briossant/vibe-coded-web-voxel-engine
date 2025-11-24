@@ -15,16 +15,15 @@ import { globalTexture } from '../utils/textures';
 
 interface GameProps {
   gameState: GameState;
-  setChunks: React.Dispatch<React.SetStateAction<Map<string, ChunkData>>>;
+  setIsUnderwater: (val: boolean) => void;
+  onChunkCountChange: (count: number) => void;
 }
 
 interface GameSceneProps {
   gameState: GameState & { setIsUnderwater: (val: boolean) => void };
-  setChunks: React.Dispatch<React.SetStateAction<Map<string, ChunkData>>>;
+  onChunkCountChange: (count: number) => void;
 }
 
-// --- Custom Cloud Shader ---
-// Uses world position for UVs so clouds stay pinned to the world while the plane follows the player
 const CloudShaderMaterial = {
     uniforms: {
         uTime: { value: 0 },
@@ -36,7 +35,6 @@ const CloudShaderMaterial = {
     vertexShader: `
         varying vec2 vUv;
         varying vec3 vWorldPos;
-        
         void main() {
             vUv = uv;
             vec4 worldPosition = modelMatrix * vec4(position, 1.0);
@@ -52,7 +50,6 @@ const CloudShaderMaterial = {
         uniform float uOpacity;
         varying vec3 vWorldPos;
 
-        // Simple noise function
         float hash(vec2 p) {
             p = fract(p * vec2(123.34, 456.21));
             p += dot(p, p + 45.32);
@@ -82,19 +79,12 @@ const CloudShaderMaterial = {
         }
 
         void main() {
-            // Animate noise with time
             vec2 pos = vWorldPos.xz * uCloudScale;
             pos.x += uTime * uCloudSpeed;
             pos.y += uTime * uCloudSpeed * 0.5;
-
             float n = fbm(pos);
-
-            // Threshold to create cloud shapes
             float alpha = smoothstep(0.4, 0.8, n);
-            
-            // Discard clear sky for performance
             if (alpha < 0.01) discard;
-
             gl_FragColor = vec4(uColor, alpha * uOpacity);
         }
     `
@@ -110,58 +100,30 @@ const CloudLayer = () => {
         const t = clock.getElapsedTime();
         if (materialRef.current) materialRef.current.uniforms.uTime.value = t;
         if (materialRef2.current) materialRef2.current.uniforms.uTime.value = t + 100;
-
-        // Keep cloud plane centered on player
-        if (meshRef.current) {
-            meshRef.current.position.set(camera.position.x, 280, camera.position.z);
-        }
-        if (meshRef2.current) {
-            meshRef2.current.position.set(camera.position.x, 310, camera.position.z);
-        }
+        if (meshRef.current) meshRef.current.position.set(camera.position.x, 280, camera.position.z);
+        if (meshRef2.current) meshRef2.current.position.set(camera.position.x, 310, camera.position.z);
     });
 
     const planeSize = MAX_RENDER_DISTANCE * CHUNK_SIZE * 2.5;
 
     return (
         <>
-            {/* Lower Layer */}
             <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]}>
                 <planeGeometry args={[planeSize, planeSize]} />
-                <shaderMaterial 
-                    ref={materialRef}
-                    attach="material"
-                    {...CloudShaderMaterial}
-                    transparent
-                    depthWrite={false} 
-                    uniforms-uCloudScale-value={0.006}
-                    uniforms-uOpacity-value={0.8}
-                />
+                <shaderMaterial ref={materialRef} attach="material" {...CloudShaderMaterial} transparent depthWrite={false} uniforms-uCloudScale-value={0.006} uniforms-uOpacity-value={0.8} />
             </mesh>
-            {/* Upper Layer (Parallax) */}
             <mesh ref={meshRef2} rotation={[-Math.PI / 2, 0, 0]}>
                 <planeGeometry args={[planeSize, planeSize]} />
-                <shaderMaterial 
-                    ref={materialRef2}
-                    attach="material"
-                    {...CloudShaderMaterial}
-                    transparent
-                    depthWrite={false}
-                    uniforms-uCloudScale-value={0.003}
-                    uniforms-uOpacity-value={0.5}
-                    uniforms-uCloudSpeed-value={0.01}
-                />
+                <shaderMaterial ref={materialRef2} attach="material" {...CloudShaderMaterial} transparent depthWrite={false} uniforms-uCloudScale-value={0.003} uniforms-uOpacity-value={0.5} uniforms-uCloudSpeed-value={0.01} />
             </mesh>
         </>
     );
 };
 
-// SkyBox Component that follows the camera
 const SkyBox = () => {
     const groupRef = useRef<THREE.Group>(null);
     useFrame(({ camera }) => {
-        if (groupRef.current) {
-            groupRef.current.position.copy(camera.position);
-        }
+        if (groupRef.current) groupRef.current.position.copy(camera.position);
     });
     return (
         <group ref={groupRef}>
@@ -180,32 +142,60 @@ const TextureManager = () => {
     return null;
 };
 
-const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
-  const [playerPos, setPlayerPos] = useState<Vector3>(() => {
-     const safeY = getTerrainHeight(0, 0) + 10;
-     return [0, safeY, 0];
-  });
-
-  // New state for underwater effect
+const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) => {
+  const [playerPos, setPlayerPos] = useState<Vector3>(() => [0, getTerrainHeight(0, 0) + 10, 0]);
   const [isUnderwater, setIsUnderwater] = useState(false);
   
-  const pendingChunks = useRef<Set<string>>(new Set());
+  // Point 3: Ref-based state management for chunks to avoid App-wide re-renders
+  // We use a Map Ref for storage and a version number state to trigger local re-renders.
+  const chunksRef = useRef<Map<string, ChunkData>>(new Map());
+  const [chunkVersion, setChunkVersion] = useState(0); 
   
+  const pendingChunks = useRef<Set<string>>(new Set());
   const spiralRef = useRef({ x: 0, y: 0, dx: 0, dy: -1 });
   const chunkScanRef = useRef<{ cx: number, cz: number, index: number }>({ cx: 0, cz: 0, index: 0 });
-
   const lightRef = useRef<THREE.DirectionalLight>(null);
   const lightTarget = useMemo(() => new THREE.Object3D(), []);
 
-  // Instantiate loader once based on seed
+  // Sync player pos ref for loader callback (GC)
+  const playerPosRef = useRef(playerPos);
+  useEffect(() => { playerPosRef.current = playerPos; }, [playerPos]);
+  
+  const renderDistRef = useRef(gameState.renderDistance + gameState.extraRenderDistance);
+  useEffect(() => { renderDistRef.current = gameState.renderDistance + gameState.extraRenderDistance; }, [gameState.renderDistance, gameState.extraRenderDistance]);
+
   const chunkLoader = useMemo(() => {
     return new ChunkLoader(gameState.seed, (chunk) => {
-        setChunks(prev => new Map(prev).set(chunk.id, chunk));
+        // Add new chunk
+        chunksRef.current.set(chunk.id, chunk);
         pendingChunks.current.delete(chunk.id);
-    });
-  }, [gameState.seed, setChunks]);
 
-  // Cleanup loader
+        // Point 5: Garbage Collection Strategy - Amortized inside load loop
+        // Check for distant chunks to remove every time we add a new one
+        const [px, , pz] = playerPosRef.current;
+        const cx = Math.floor(px / CHUNK_SIZE);
+        const cz = Math.floor(pz / CHUNK_SIZE);
+        const limit = renderDistRef.current + 4; // Buffer
+
+        let deleted = false;
+        // Optimization: Don't scan entire map every single chunk load if map is huge.
+        // But map size is ~1000 items, iteration is fast in JS (microsecond scale).
+        for (const [key, val] of chunksRef.current) {
+             // Simple Manhattan distance check for speed first or just simple rectangular bounds
+             if (Math.abs(val.x - cx) > limit || Math.abs(val.z - cz) > limit) {
+                 chunksRef.current.delete(key);
+                 deleted = true;
+             }
+        }
+        
+        // Update App debug info (throttled/batched by React nature, effectively)
+        onChunkCountChange(chunksRef.current.size);
+
+        // Force component update to render new meshes
+        setChunkVersion(v => v + 1);
+    });
+  }, [gameState.seed, onChunkCountChange]);
+
   useEffect(() => {
       return () => chunkLoader.terminate();
   }, [chunkLoader]);
@@ -225,7 +215,6 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
       const centerCX = Math.floor(px / CHUNK_SIZE);
       const centerCZ = Math.floor(pz / CHUNK_SIZE);
       
-      // Total loaded radius covers both high res and low res chunks
       const maxRadius = gameState.renderDistance + gameState.extraRenderDistance;
 
       if (chunkScanRef.current.cx !== centerCX || chunkScanRef.current.cz !== centerCZ) {
@@ -242,68 +231,27 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
 
       while (requestedCount < MAX_REQUESTS_PER_FRAME && ops < MAX_SCAN_OPS) {
           ops++;
-
           if (x*x + y*y <= maxRadius * maxRadius) {
                 const targetCX = centerCX + x;
                 const targetCZ = centerCZ + y;
                 const id = `${targetCX},${targetCZ}`;
-
-                if (!gameState.chunks.has(id) && !pendingChunks.current.has(id)) {
+                // Direct Ref check is faster than State Map check
+                if (!chunksRef.current.has(id) && !pendingChunks.current.has(id)) {
                     pendingChunks.current.add(id);
                     chunkLoader.requestChunk(targetCX, targetCZ);
                     requestedCount++;
                 }
           }
-
           if (x === y || (x < 0 && x === -y) || (x > 0 && x === 1 - y)) {
-              const temp = dx;
-              dx = -dy;
-              dy = temp;
+              const temp = dx; dx = -dy; dy = temp;
           }
-          x += dx;
-          y += dy;
-
+          x += dx; y += dy;
           if (Math.abs(x) > maxRadius + 5 && Math.abs(y) > maxRadius + 5) {
-               x = 0; y = 0; dx = 0; dy = -1;
-               break; 
+               x = 0; y = 0; dx = 0; dy = -1; break; 
           }
       }
-
       spiralRef.current = { x, y, dx, dy };
   });
-
-  useEffect(() => {
-     const interval = setInterval(() => {
-        const [px, , pz] = playerPos;
-        const cx = Math.floor(px / CHUNK_SIZE);
-        const cz = Math.floor(pz / CHUNK_SIZE);
-        
-        // Unload chunks outside of total range + buffer
-        const radius = gameState.renderDistance + gameState.extraRenderDistance + 4; 
-
-        setChunks((prev: Map<string, ChunkData>) => {
-            let changed = false;
-            for(const key of prev.keys()) {
-                const [kx, kz] = key.split(',').map(Number);
-                if (Math.abs(kx - cx) > radius || Math.abs(kz - cz) > radius) {
-                     if (!changed) changed = true; 
-                }
-            }
-            
-            if (!changed) return prev;
-
-            const next = new Map(prev);
-            for(const key of next.keys()) {
-                const [kx, kz] = key.split(',').map(Number);
-                 if (Math.abs(kx - cx) > radius || Math.abs(kz - cz) > radius) {
-                    next.delete(key);
-                 }
-            }
-            return next;
-        });
-     }, 2000);
-     return () => clearInterval(interval);
-  }, [playerPos, gameState.renderDistance, gameState.extraRenderDistance, setChunks]);
 
   const playerChunkX = Math.floor(playerPos[0] / CHUNK_SIZE);
   const playerChunkZ = Math.floor(playerPos[2] / CHUNK_SIZE);
@@ -311,68 +259,62 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
   const { highDetailChunks, lowDetailChunks } = useMemo(() => {
       const high: {chunk: ChunkData, lod: number}[] = [];
       const low: ChunkData[] = [];
-      
       const cx = playerChunkX;
       const cz = playerChunkZ;
       const highResLimit = gameState.renderDistance;
 
-      for (const chunk of gameState.chunks.values()) {
+      for (const chunk of chunksRef.current.values()) {
           const dx = Math.abs(chunk.x - cx);
           const dz = Math.abs(chunk.z - cz);
           const dist = Math.max(dx, dz); 
-          
           if (dist <= highResLimit) {
-              // Within high res distance: Use LOD 0 or 1 based on close proximity
-              if (dist < 4) {
-                  high.push({ chunk, lod: 0 });
-              } else {
-                  high.push({ chunk, lod: 1 });
-              }
+              if (dist < 4) high.push({ chunk, lod: 0 });
+              else high.push({ chunk, lod: 1 });
           } else {
-              // Outside high res distance: Use DistantTerrain
               low.push(chunk);
           }
       }
-
       return { highDetailChunks: high, lowDetailChunks: low };
-  }, [gameState.chunks, playerChunkX, playerChunkZ, gameState.renderDistance]);
+  }, [chunkVersion, playerChunkX, playerChunkZ, gameState.renderDistance]); // Depend on chunkVersion
 
-  const getChunk = useCallback((x: number, z: number) => gameState.chunks.get(`${x},${z}`), [gameState.chunks]);
+  const getChunk = useCallback((x: number, z: number) => chunksRef.current.get(`${x},${z}`), []);
 
   const getBlock = useCallback((x: number, y: number, z: number): number => {
     if (y < 0 || y >= WORLD_HEIGHT) return BlockType.AIR;
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
-    const chunk = gameState.chunks.get(`${cx},${cz}`);
+    const chunk = chunksRef.current.get(`${cx},${cz}`);
     if (!chunk) return BlockType.AIR;
-    
     const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
     const lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
     return getBlockFromChunk(chunk, lx, y, lz);
-  }, [gameState.chunks]);
+  }, []);
 
   const setBlock = useCallback((x: number, y: number, z: number, type: number) => {
      if (y < 0 || y >= WORLD_HEIGHT) return;
      const cx = Math.floor(x / CHUNK_SIZE);
      const cz = Math.floor(z / CHUNK_SIZE);
      
-     setChunks((prev: Map<string, ChunkData>) => {
-         const newMap = new Map(prev);
-         const key = `${cx},${cz}`;
-         const chunk = newMap.get(key);
-         if (!chunk) return prev;
+     const key = `${cx},${cz}`;
+     const chunk = chunksRef.current.get(key);
+     if (!chunk) return;
 
-         const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-         const lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-         const idx = (lx * WORLD_HEIGHT + y) * CHUNK_SIZE + lz;
+     const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+     const lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+     const idx = (lx * WORLD_HEIGHT + y) * CHUNK_SIZE + lz;
 
-         const newData = new Uint8Array(chunk.data);
-         newData[idx] = type;
-         
-         newMap.set(key, { ...chunk, data: newData, isDirty: !chunk.isDirty });
-         return newMap;
-     });
-  }, [setChunks]);
+     // Update logic needs to be mindful of Immutability if using strict React patterns,
+     // but here we are mutating the buffer in place for performance, 
+     // then triggering a mesh rebuild.
+     
+     // Clone array to be safe for history/undo if we added that, but for now in-place is okay 
+     // provided we flag dirty.
+     chunk.data[idx] = type;
+     chunk.isDirty = true;
+     
+     // Trigger update
+     setChunkVersion(v => v + 1);
+  }, []);
 
   const handlePosChange = useCallback((pos: Vector3) => {
      if (Math.abs(pos[0] - playerPos[0]) > 1 || Math.abs(pos[2] - playerPos[2]) > 1) {
@@ -381,55 +323,26 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
      }
   }, [playerPos, gameState]);
 
-  // Get currently selected block from hotbar
-  const selectedBlock = gameState.hotbar[gameState.activeHotbarSlot];
-
   return (
     <>
       <TextureManager />
       <color attach="background" args={['#87CEEB']} />
-      
       <Sky 
-        distance={450000} 
-        sunPosition={[100, 50, 100]} 
-        inclination={0.49} 
-        azimuth={0.25} 
-        rayleigh={isUnderwater ? 1 : 0.2} // Crisper sky
-        mieCoefficient={0.005}
-        mieDirectionalG={0.7}
+        distance={450000} sunPosition={[100, 50, 100]} inclination={0.49} azimuth={0.25} 
+        rayleigh={isUnderwater ? 1 : 0.2} mieCoefficient={0.005} mieDirectionalG={0.7}
       />
-      
-      {/* Infinite Stars */}
       <SkyBox />
-      
-      {/* Improved Fog matching Sky color better */}
       <fogExp2 attach="fog" args={[isUnderwater ? '#00334d' : '#B3D9FF', isUnderwater ? 0.08 : 0.0015]} />
-      
       <CloudLayer />
-
-      {/* 
-        Lighting Setup:
-        - Hemisphere for basic fill (Sky blue vs Ground brown)
-        - Directional for sun shadows
-      */}
       <hemisphereLight args={['#E3F2FD', '#3E2723', 0.7]} />
       <ambientLight intensity={0.4} />
       <primitive object={lightTarget} />
       <directionalLight
-        ref={lightRef}
-        target={lightTarget}
-        position={[50, 100, 50]}
-        intensity={1.2}
-        castShadow
-        shadow-bias={-0.0001}
-        shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-120}
-        shadow-camera-right={120}
-        shadow-camera-top={120}
-        shadow-camera-bottom={-120}
-        shadow-camera-far={350}
+        ref={lightRef} target={lightTarget} position={[50, 100, 50]} intensity={1.2}
+        castShadow shadow-bias={-0.0001} shadow-mapSize={[2048, 2048]}
+        shadow-camera-left={-120} shadow-camera-right={120} shadow-camera-top={120} shadow-camera-bottom={-120} shadow-camera-far={350}
       />
-
+      
       {highDetailChunks.map(({ chunk, lod }) => (
         <ChunkMesh 
             key={chunk.id} 
@@ -456,20 +369,19 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, setChunks }) => {
         getBlock={getBlock}
         setBlock={setBlock}
         onPositionChange={handlePosChange}
-        setIsUnderwater={gameState.setIsUnderwater} 
-        selectedBlock={selectedBlock}
+        setIsUnderwater={(val) => { setIsUnderwater(val); gameState.setIsUnderwater(val); }} 
+        selectedBlock={gameState.selectedBlock || BlockType.STONE}
         isInventoryOpen={gameState.isInventoryOpen}
       />
     </>
   );
 };
 
-const Game: React.FC<GameProps & { setIsUnderwater: (val: boolean) => void }> = ({ gameState, setChunks, setIsUnderwater }) => {
+const Game: React.FC<GameProps> = ({ gameState, setIsUnderwater, onChunkCountChange }) => {
     const enhancedGameState = { ...gameState, setIsUnderwater };
-    
     return (
     <Canvas shadows camera={{ fov: 70, near: 0.1, far: MAX_RENDER_DISTANCE * CHUNK_SIZE }}>
-      <GameScene gameState={enhancedGameState} setChunks={setChunks} />
+      <GameScene gameState={enhancedGameState} onChunkCountChange={onChunkCountChange} />
       {gameState.debugMode && <Stats />}
     </Canvas>
   );

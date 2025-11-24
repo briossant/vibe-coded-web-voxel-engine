@@ -1,13 +1,12 @@
 
-
-
-
-
 export const CHUNK_SIZE = 16;
 export const WORLD_HEIGHT = 384;
 export const WATER_LEVEL = 64;
 export const DEFAULT_RENDER_DISTANCE = 32; 
 export const MAX_RENDER_DISTANCE = 128;
+
+// Texture Constants
+export const TEXTURE_ATLAS_SIZE = 64;
 
 // Physics & Movement
 export const GRAVITY = 32.0;

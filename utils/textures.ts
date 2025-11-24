@@ -1,13 +1,20 @@
 
 import * as THREE from 'three';
 import { getBlockDef } from '../blocks';
+import { TEXTURE_ATLAS_SIZE } from '../constants';
 
-// Texture Atlas: 32x32 pixels, 64 tiles wide
-export const TEXTURE_ATLAS_SIZE = 64;
 const TILE_SIZE = 32;
 const S = 2; // Scale factor from original 16px designs
 
+// Re-export for compatibility if needed, though direct import from constants is preferred
+export { TEXTURE_ATLAS_SIZE };
+
 const createAtlas = () => {
+  // WORKER SAFETY CHECK: Workers do not have access to document/canvas.
+  if (typeof document === 'undefined') {
+      return { tex: null as any, url: '' };
+  }
+
   const canvas = document.createElement('canvas');
   canvas.width = TILE_SIZE * TEXTURE_ATLAS_SIZE;
   canvas.height = TILE_SIZE;

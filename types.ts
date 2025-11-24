@@ -28,7 +28,9 @@ export interface ChunkData {
 }
 
 export interface GameState {
-  chunks: Map<string, ChunkData>;
+  // chunks: Map<string, ChunkData>; // Moved to internal Game state
+  chunkCount: number; // For HUD
+  
   playerPosition: Vector3;
   renderDistance: number;
   extraRenderDistance: number; // Distance for low-res distant terrain
@@ -44,7 +46,6 @@ export interface GameState {
   activeHotbarSlot: number;
   setActiveHotbarSlot: (slot: number) => void;
   
-  // Added missing properties
   selectedBlock?: number;
   setSelectedBlock?: (blockId: number) => void;
 
@@ -53,6 +54,9 @@ export interface GameState {
   toggleDebug: () => void;
   updateRenderDistance: (dist: number) => void;
   updateExtraRenderDistance: (dist: number) => void;
+  
+  // Accessors
+  getChunk: (x: number, z: number) => ChunkData | undefined;
   getBlock: (x: number, y: number, z: number) => number;
   setBlock: (x: number, y: number, z: number, type: number) => void;
 }
@@ -77,21 +81,24 @@ export interface BlockDefinition {
   mapColor: string; // Hex for distant terrain/minimap
 }
 
-// Augment the global JSX namespace to recognize React Three Fiber elements
 declare global {
   namespace JSX {
     interface IntrinsicElements {
       group: any;
       mesh: any;
       meshStandardMaterial: any;
+      meshBasicMaterial: any;
       instancedMesh: any;
       boxGeometry: any;
+      planeGeometry: any;
       primitive: any;
       ambientLight: any;
       directionalLight: any;
       hemisphereLight: any;
+      pointLight: any;
       color: any;
       fogExp2: any;
+      shaderMaterial: any;
       [elemName: string]: any;
     }
   }

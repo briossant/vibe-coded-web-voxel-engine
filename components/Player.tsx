@@ -4,7 +4,7 @@ import { useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { Vector3 } from '../types';
-import { BlockType } from '../blocks';
+import { BlockType, getBlockDef } from '../blocks';
 import { 
     GRAVITY, 
     JUMP_FORCE, 
@@ -90,8 +90,12 @@ const Player: React.FC<PlayerProps> = ({
 
       for (let i = 0; i < range * 3; i++) {
           const block = getBlock(x, y, z);
-          if (block !== BlockType.AIR && block !== BlockType.WATER && block !== BlockType.SEAGRASS) {
-              return { x, y, z, face };
+          // Data-driven check: We can interact with anything that isn't Air and isn't a Fluid (like Water)
+          if (block !== BlockType.AIR) {
+              const def = getBlockDef(block);
+              if (!def.isFluid) {
+                  return { x, y, z, face };
+              }
           }
           
           if (tMaxX < tMaxY) {
@@ -200,14 +204,9 @@ const Player: React.FC<PlayerProps> = ({
           for (let y = minY; y <= maxY; y++) {
               for (let z = minZ; z <= maxZ; z++) {
                   const block = getBlock(x, y, z);
-                  if (block !== BlockType.AIR && 
-                      block !== BlockType.WATER && 
-                      block !== BlockType.SEAGRASS &&
-                      block !== BlockType.TALL_GRASS &&
-                      block !== BlockType.FLOWER_YELLOW &&
-                      block !== BlockType.FLOWER_RED &&
-                      block !== BlockType.DEAD_BUSH &&
-                      !(block >= BlockType.TULIP_RED && block <= BlockType.CORNFLOWER)) {
+                  // Refactored to use data-driven definition instead of hardcoded ID checks
+                  const def = getBlockDef(block);
+                  if (def.isSolid) {
                       return true;
                   }
               }
@@ -228,7 +227,7 @@ const Player: React.FC<PlayerProps> = ({
     const headY = Math.floor(camera.position.y);
     const headZ = Math.floor(camera.position.z);
     const headBlock = getBlock(headX, headY, headZ);
-    const isHeadUnderwater = headBlock === BlockType.WATER || headBlock === BlockType.SEAGRASS;
+    const isHeadUnderwater = getBlockDef(headBlock).isFluid;
     
     setIsUnderwater(isHeadUnderwater);
 
@@ -237,7 +236,7 @@ const Player: React.FC<PlayerProps> = ({
     const feetY = Math.floor(pos.current.y);
     const feetZ = Math.floor(pos.current.z);
     const feetBlock = getBlock(feetX, feetY, feetZ);
-    const isBodyUnderwater = feetBlock === BlockType.WATER || feetBlock === BlockType.SEAGRASS;
+    const isBodyUnderwater = getBlockDef(feetBlock).isFluid;
 
     // 1. Calculate Desired Move Direction
     const forwardInput = Number(keys.current.forward) - Number(keys.current.backward);

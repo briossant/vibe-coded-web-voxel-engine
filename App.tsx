@@ -1,8 +1,9 @@
+
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import Game from './components/Game';
 import HUD from './components/HUD';
 import Inventory from './components/Inventory';
-import { GameState, ChunkData, Vector3 } from './types';
+import { GameState, Vector3 } from './types';
 import { BlockType } from './blocks';
 import { noise } from './utils/noise';
 
@@ -10,7 +11,9 @@ const App: React.FC = () => {
   // Generate a random seed on first load
   const [seed] = useState(() => Math.floor(Math.random() * 2147483647));
   
-  const [chunks, setChunks] = useState<Map<string, ChunkData>>(new Map());
+  // Chunk state moved to Game.tsx. App only needs to know count for debug overlay.
+  const [chunkCount, setChunkCount] = useState(0);
+  
   const [playerPosition, setPlayerPosition] = useState<Vector3>([0, 80, 0]);
   
   // Dual Render Distance Settings
@@ -37,8 +40,7 @@ const App: React.FC = () => {
   
   const [activeHotbarSlot, setActiveHotbarSlot] = useState<number>(0);
 
-  // Reseed the global noise utility synchronously so initial renders (like Player physics)
-  // use the correct seed immediately.
+  // Reseed the global noise utility synchronously
   useMemo(() => {
     noise.reseed(seed);
   }, [seed]);
@@ -46,10 +48,8 @@ const App: React.FC = () => {
   const toggleDebug = useCallback(() => setDebugMode(prev => !prev), []);
   const toggleMenu = useCallback(() => setIsMenuOpen(prev => !prev), []);
 
-  // Handle Hotbar Keys (1-9) and Inventory Key (E)
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
-          // Inventory Toggle
           if (e.code === 'KeyE') {
               if (document.activeElement?.tagName === 'INPUT') return;
               setInventoryOpen(prev => !prev);
@@ -57,19 +57,15 @@ const App: React.FC = () => {
           if (e.code === 'Escape') {
               setInventoryOpen(false);
           }
-
-          // Hotbar Selection
           if (!isInventoryOpen && e.key >= '1' && e.key <= '9') {
               const index = parseInt(e.key) - 1;
               setActiveHotbarSlot(index);
           }
       };
-
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isInventoryOpen]);
 
-  // Update hotbar slot when item is selected in Inventory
   const handleBlockSelect = useCallback((blockId: number) => {
       setHotbar(prev => {
           const next = [...prev];
@@ -78,13 +74,12 @@ const App: React.FC = () => {
       });
   }, [activeHotbarSlot]);
 
-  // Placeholders, the real logic is inside Game.tsx for performance context
   const noopGetBlock = (x: number, y: number, z: number) => BlockType.AIR;
   const noopSetBlock = (x: number, y: number, z: number, type: number) => {};
+  const noopGetChunk = (x: number, z: number) => undefined;
 
-  // GameState object to pass down
   const gameState: GameState = {
-    chunks,
+    chunkCount,
     playerPosition,
     renderDistance,
     extraRenderDistance,
@@ -96,10 +91,10 @@ const App: React.FC = () => {
     toggleDebug,
     updateRenderDistance: setRenderDistance,
     updateExtraRenderDistance: setExtraRenderDistance,
+    getChunk: noopGetChunk, // Overridden in Game
     getBlock: noopGetBlock, // Overridden in Game
     setBlock: noopSetBlock,  // Overridden in Game
     
-    // Inventory
     isInventoryOpen,
     setInventoryOpen,
     hotbar,
@@ -110,22 +105,22 @@ const App: React.FC = () => {
     setSelectedBlock: handleBlockSelect 
   };
 
-  // Extended State for HUD
   const hudState = { ...gameState, isUnderwater };
 
   return (
     <div className="relative w-full h-screen bg-black">
-      {/* 3D Layer */}
       <div className="absolute inset-0 z-0">
-        <Game gameState={gameState} setChunks={setChunks} setIsUnderwater={setIsUnderwater} />
+        <Game 
+            gameState={gameState} 
+            setIsUnderwater={setIsUnderwater}
+            onChunkCountChange={setChunkCount}
+        />
       </div>
       
-      {/* UI Layer */}
       <div className="absolute inset-0 z-10 pointer-events-none">
         <HUD gameState={hudState} />
       </div>
 
-      {/* Inventory Overlay (Pointer events auto) */}
       {isInventoryOpen && (
           <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-auto">
              <Inventory 
