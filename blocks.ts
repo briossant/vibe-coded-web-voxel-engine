@@ -79,7 +79,7 @@ const registerAll = () => {
 
     // Natural Blocks - Darker/Richer Palette for Distant Terrain
     reg(simple(BlockType.DIRT, 'Dirt', 'Nature', 1, '#3B2A22')); // Deep brown
-    reg(createBlock(BlockType.GRASS, 'Grass', 'Nature', 3, 2, 1, '#243A18')); // Deep forest green
+    reg(createBlock(BlockType.GRASS, 'Grass', 'Nature', 3, 2, 1, '#447A38')); // Deep forest green
     reg(simple(BlockType.STONE, 'Stone', 'Nature', 30, '#333333')); // Deep gray
     
     reg(column(BlockType.OAK_LOG, 'Oak Log', 'Wood', 27, 4, '#4A3C2E'));

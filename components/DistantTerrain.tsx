@@ -12,16 +12,18 @@ interface DistantTerrainProps {
 }
 
 const _color = new THREE.Color();
+const _topColor = new THREE.Color();
 const _sideColor = new THREE.Color();
+const _white = new THREE.Color(1, 1, 1);
 const _matrix = new THREE.Matrix4();
 const _position = new THREE.Vector3();
 const _scale = new THREE.Vector3();
 const _quaternion = new THREE.Quaternion();
 
-// Pre-compute colors. Ensure fallback for missing definitions.
+// Pre-compute colors
 const BLOCK_COLORS = new Array(256).fill(null).map((_, i) => {
     const def = BLOCK_DEFINITIONS[i];
-    if (!def) return new THREE.Color('#ff00ff'); // Error magenta
+    if (!def) return new THREE.Color('#ff00ff');
     return new THREE.Color(def.mapColor);
 });
 
@@ -30,13 +32,11 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
   const waterMeshRef = useRef<THREE.InstancedMesh>(null);
   const maxCount = 400000; 
 
-  // Create separate geometries for opaque and water to prevent attribute sharing conflicts
   const { opaqueGeometry, waterGeometry, opaqueMaterial, waterMaterial } = useMemo(() => {
     const baseGeo = new THREE.BoxGeometry(1, 1, 1);
-    // Pivot at bottom center for easy height scaling from ground up
-    baseGeo.translate(0, 0.5, 0); 
+    baseGeo.translate(0, 0.5, 0); // Pivot at bottom
     
-    // Generate vertex colors based on normals to simulate directional light
+    // Bake simple directional lighting into vertex colors
     const colors: number[] = [];
     const normals = baseGeo.attributes.normal;
     const count = normals.count;
@@ -44,57 +44,70 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
     for (let i = 0; i < count; i++) {
         const ny = normals.getY(i);
         const nx = normals.getX(i);
-
-        let intensity = 1.0; // Top Face
-
-        if (ny < -0.5) {
-            intensity = 0.4; // Bottom Face (dark shadow)
-        } else if (ny < 0.5) {
-            // Side Faces
-            if (Math.abs(nx) > 0.5) {
-                intensity = 0.8; 
-            } else {
-                intensity = 0.6; 
-            }
-        }
+        let intensity = 1.0; 
+        if (ny < -0.5) intensity = 0.4; // Bottom
+        else if (ny < 0.5) intensity = Math.abs(nx) > 0.5 ? 0.8 : 0.6; // Sides
         colors.push(intensity, intensity, intensity);
     }
-
     baseGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 
-    // Clone geometries so we can attach distinct 'instanceSideColor' attributes to each without conflict
     const opGeo = baseGeo.clone();
     const waGeo = baseGeo.clone();
 
-    // Custom Shader Logic for Side Colors (e.g., Snow mountains with Stone sides)
+    // Custom Shader: Mix Top and Side colors based on height threshold
     const onBeforeCompile = (shader: any) => {
         shader.vertexShader = `
+          attribute vec3 instanceTopColor;
           attribute vec3 instanceSideColor;
+          attribute float instanceHeight;
+          attribute float instanceCapHeight;
+          varying vec3 vTopColor;
+          varying vec3 vSideColor;
+          varying float vY;
+          varying float vH;
+          varying float vCap;
         ` + shader.vertexShader;
 
         shader.vertexShader = shader.vertexShader.replace(
-            '#include <color_vertex>',
+            '#include <begin_vertex>',
             `
-            #include <color_vertex>
-            
-            #ifdef USE_INSTANCING_COLOR
-                // Default logic is vColor = color * instanceColor;
-                // We override instanceColor if it's a side face (normal.y < 0.5)
-                
-                vec3 finalInstanceColor = instanceColor;
-                
-                // Use standard 'normal' attribute directly. 
-                if (abs(normal.y) < 0.5) {
-                    finalInstanceColor = instanceSideColor;
-                }
-                
-                vec3 lighting = vec3(1.0);
-                #ifdef USE_COLOR
-                    lighting = color.rgb;
-                #endif
+            #include <begin_vertex>
+            vTopColor = instanceTopColor;
+            vSideColor = instanceSideColor;
+            vY = position.y; // 0 to 1
+            vH = instanceHeight; // Height in blocks
+            vCap = instanceCapHeight;
+            `
+        );
 
-                vColor = lighting * finalInstanceColor;
-            #endif
+        shader.fragmentShader = `
+          varying vec3 vTopColor;
+          varying vec3 vSideColor;
+          varying float vY;
+          varying float vH;
+          varying float vCap;
+        ` + shader.fragmentShader;
+
+        shader.fragmentShader = shader.fragmentShader.replace(
+            '#include <color_fragment>',
+            `
+            #include <color_fragment> // vColor contains lighting intensity
+            
+            // Calculate cap threshold. 
+            // We want the top [vCap] blocks to be TopColor.
+            // vY is 0..1. The local height of 1.0 corresponds to vH blocks in world.
+            // So vCap blocks in local space is vCap / vH.
+            
+            float threshold = 1.0 - (vCap / max(vH, 0.01));
+            
+            vec3 finalColor = vSideColor;
+            
+            // Apply Top Color if above threshold
+            if (vY >= threshold) {
+                finalColor = vTopColor;
+            }
+            
+            diffuseColor.rgb *= finalColor;
             `
         );
     };
@@ -105,8 +118,8 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
     const waMat = new THREE.MeshBasicMaterial({ 
         vertexColors: true, 
         transparent: true, 
-        opacity: 0.85, // Higher opacity to reduce layering artifacts
-        depthWrite: false // CRITICAL: Disable depth write to prevent sorting issues with transparent water
+        opacity: 0.80, 
+        depthWrite: false 
     });
     waMat.onBeforeCompile = onBeforeCompile;
 
@@ -118,20 +131,37 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
     const waterMesh = waterMeshRef.current;
     if (!opaqueMesh || !waterMesh) return;
 
-    // Helper to init attributes on the specific mesh's geometry
+    // Initialize custom attributes
     const initAttrs = (mesh: THREE.InstancedMesh) => {
         if (!mesh.instanceColor || mesh.instanceColor.count < maxCount) {
             mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(maxCount * 3), 3);
         }
-        if (!mesh.geometry.getAttribute('instanceSideColor') || mesh.geometry.getAttribute('instanceSideColor').count < maxCount) {
+        if (!mesh.geometry.getAttribute('instanceTopColor')) {
+            mesh.geometry.setAttribute('instanceTopColor', new THREE.InstancedBufferAttribute(new Float32Array(maxCount * 3), 3));
+        }
+        if (!mesh.geometry.getAttribute('instanceSideColor')) {
             mesh.geometry.setAttribute('instanceSideColor', new THREE.InstancedBufferAttribute(new Float32Array(maxCount * 3), 3));
+        }
+        if (!mesh.geometry.getAttribute('instanceHeight')) {
+            mesh.geometry.setAttribute('instanceHeight', new THREE.InstancedBufferAttribute(new Float32Array(maxCount), 1));
+        }
+        if (!mesh.geometry.getAttribute('instanceCapHeight')) {
+            mesh.geometry.setAttribute('instanceCapHeight', new THREE.InstancedBufferAttribute(new Float32Array(maxCount), 1));
         }
     };
     initAttrs(opaqueMesh);
     initAttrs(waterMesh);
 
-    const opSideColorAttr = opaqueMesh.geometry.getAttribute('instanceSideColor') as THREE.InstancedBufferAttribute;
-    const waSideColorAttr = waterMesh.geometry.getAttribute('instanceSideColor') as THREE.InstancedBufferAttribute;
+    // Get attribute references
+    const getAttrs = (mesh: THREE.InstancedMesh) => ({
+        top: mesh.geometry.getAttribute('instanceTopColor') as THREE.InstancedBufferAttribute,
+        side: mesh.geometry.getAttribute('instanceSideColor') as THREE.InstancedBufferAttribute,
+        height: mesh.geometry.getAttribute('instanceHeight') as THREE.InstancedBufferAttribute,
+        cap: mesh.geometry.getAttribute('instanceCapHeight') as THREE.InstancedBufferAttribute
+    });
+
+    const opAttrs = getAttrs(opaqueMesh);
+    const waAttrs = getAttrs(waterMesh);
 
     const pChunkX = Math.floor(playerPosition[0] / CHUNK_SIZE);
     const pChunkZ = Math.floor(playerPosition[2] / CHUNK_SIZE);
@@ -149,7 +179,6 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
         const relativeDist = dist - renderDistance;
         let step = 1; 
         
-        // LOD Steps
         if (relativeDist > 2) step = 2;
         if (relativeDist > 6) step = 4;
         if (relativeDist > 12) step = 8;
@@ -168,12 +197,10 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
 
                 if (type === 0) continue;
 
-                // EXCLUSION LOGIC: Treat sprites as the block underneath to avoid "floating" flowers
                 const def = BLOCK_DEFINITIONS[type];
                 if (def?.isSprite) {
-                    h -= 1; // Lower height to ground level
+                    h -= 1; 
                     if (h < 0) continue; 
-                    // Guess ground type if we don't scan down
                     if (type === BlockType.DEAD_BUSH) type = BlockType.SAND;
                     else if (type === BlockType.SEAGRASS) type = BlockType.WATER;
                     else type = BlockType.GRASS;
@@ -182,17 +209,17 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
                 const wx = (chunk.x * CHUNK_SIZE) + x;
                 const wz = (chunk.z * CHUNK_SIZE) + z;
 
-                // --- INSTANCE SETTER HELPER ---
+                // --- INSTANCE SETTER ---
                 const setInstance = (
                     mesh: THREE.InstancedMesh, 
-                    sideAttr: THREE.InstancedBufferAttribute, 
+                    attrs: ReturnType<typeof getAttrs>,
                     i: number, 
                     bType: number, 
-                    startY: number, // Bottom Y
-                    height: number, // Total Height
+                    startY: number, 
+                    height: number,
+                    capSize: number = 0,
                     isWater: boolean = false
                 ) => {
-                    // For water, reduce overlap to prevent alpha accumulation grid lines
                     const overlap = isWater ? 0.0 : 0.05;
 
                     _position.set(wx + step / 2, startY, wz + step / 2);
@@ -200,65 +227,77 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
                     _matrix.compose(_position, _quaternion, _scale);
                     
                     mesh.setMatrixAt(i, _matrix);
+                    
+                    // Set standard color to WHITE so vColor only tracks lighting
+                    mesh.setColorAt(i, _white);
 
+                    // Determine Colors
                     const baseColor = BLOCK_COLORS[bType] || BLOCK_COLORS[0];
-                    _color.copy(baseColor);
+                    _topColor.copy(baseColor);
                     _sideColor.copy(baseColor);
 
+                    // Specific Logic for Grass and Snow Sides
                     if (bType === BlockType.SNOW) {
-                        _sideColor.copy(BLOCK_COLORS[BlockType.STONE]); 
+                         const stone = BLOCK_COLORS[BlockType.STONE];
+                         if (stone) _sideColor.copy(stone);
                     } else if (bType === BlockType.GRASS) {
-                        _sideColor.copy(BLOCK_COLORS[BlockType.DIRT]); 
+                         const dirt = BLOCK_COLORS[BlockType.DIRT];
+                         if (dirt) _sideColor.copy(dirt);
                     }
 
-                    // Tint based on absolute height of the TOP of this block
+                    // Height Tinting (Atmospheric)
                     const topH = startY + height;
                     const heightShade = 0.8 + (topH / 384) * 0.2; 
-                    _color.multiplyScalar(heightShade);
+                    _topColor.multiplyScalar(heightShade);
                     _sideColor.multiplyScalar(heightShade);
 
-                    mesh.setColorAt(i, _color);
-                    sideAttr.setXYZ(i, _sideColor.r, _sideColor.g, _sideColor.b);
+                    // Update Attributes
+                    attrs.top.setXYZ(i, _topColor.r, _topColor.g, _topColor.b);
+                    attrs.side.setXYZ(i, _sideColor.r, _sideColor.g, _sideColor.b);
+                    attrs.height.setX(i, height);
+                    attrs.cap.setX(i, capSize);
                 };
 
-                // --- LOGIC SPLIT: WATER vs OPAQUE ---
                 if (type === BlockType.WATER) {
-                    // 1. Scan down for Seabed
                     let seabedY = 0;
-                    let floorBlock: number = BlockType.SAND; // Default fallback
-
-                    // Scan from surface down
-                    for(let y = h - 1; y > 0; y--) {
-                         const b = chunk.data[(sampleX * WORLD_HEIGHT + y) * CHUNK_SIZE + sampleZ];
-                         if (b !== BlockType.WATER && b !== BlockType.SEAGRASS && b !== BlockType.TALL_GRASS && b !== BlockType.AIR) {
-                             floorBlock = b;
-                             seabedY = y;
-                             break;
-                         }
+                    let floorBlock: number = BlockType.SAND;
+                    
+                    // Scan down to find the seabed. Check chunk.data exists first.
+                    if (chunk.data && chunk.data.length > 0) {
+                        for(let y = h - 1; y > 0; y--) {
+                             const b = chunk.data[(sampleX * WORLD_HEIGHT + y) * CHUNK_SIZE + sampleZ];
+                             if (b !== BlockType.WATER && b !== BlockType.SEAGRASS && b !== BlockType.TALL_GRASS && b !== BlockType.AIR) {
+                                 floorBlock = b;
+                                 seabedY = y;
+                                 break;
+                             }
+                        }
+                    } else {
+                        // Fallback if data isn't available: Assume deep ocean or 10 block depth
+                        seabedY = Math.max(0, h - 15);
+                        floorBlock = BlockType.SAND;
                     }
                     
-                    // 2. Render Seabed (Opaque) - From 0 up to seabedY + 1
                     const seabedHeight = seabedY + 1;
-                    setInstance(opaqueMesh, opSideColorAttr, opaqueIndex, floorBlock, 0, seabedHeight);
+                    
+                    // 1. Render Seabed Pillar
+                    setInstance(opaqueMesh, opAttrs, opaqueIndex, floorBlock, 0, seabedHeight, 0, false);
                     opaqueIndex++;
 
-                    // 3. Render Water (Transparent)
-                    // Flatten distant water to avoid opacity stacking and side artifacts.
-                    // Instead of a full volume, render a thin "lid" or slab at the surface.
+                    // 2. Render Water Volume (Full Depth)
                     const waterHeight = (h + 1) - seabedHeight;
                     if (waterHeight > 0) {
-                        const slabThickness = 0.5;
-                        const waterSurfaceY = h + 1;
-                        const slabStart = waterSurfaceY - slabThickness;
-                        
-                        setInstance(waterMesh, waSideColorAttr, waterIndex, type, slabStart, slabThickness, true);
+                        setInstance(waterMesh, waAttrs, waterIndex, type, seabedHeight, waterHeight, 0, true);
                         waterIndex++;
                     }
-
                 } else {
-                    // Standard Opaque Block
+                    // Standard Terrain
                     const height = h + 1;
-                    setInstance(opaqueMesh, opSideColorAttr, opaqueIndex, type, 0, height);
+                    let capH = 0.0;
+                    if (type === BlockType.GRASS) capH = 0.25;
+                    if (type === BlockType.SNOW) capH = 4.0; // Larger snow cap
+                    
+                    setInstance(opaqueMesh, opAttrs, opaqueIndex, type, 0, height, capH, false);
                     opaqueIndex++;
                 }
             }
@@ -269,15 +308,22 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
     opaqueMesh.count = opaqueIndex;
     waterMesh.count = waterIndex;
 
+    // UPDATE OPAQUE MESH
     opaqueMesh.instanceMatrix.needsUpdate = true;
     if (opaqueMesh.instanceColor) opaqueMesh.instanceColor.needsUpdate = true;
-    opSideColorAttr.needsUpdate = true;
+    opAttrs.top.needsUpdate = true;
+    opAttrs.side.needsUpdate = true;
+    opAttrs.height.needsUpdate = true;
+    opAttrs.cap.needsUpdate = true;
+    opaqueMaterial.needsUpdate = true;
 
+    // UPDATE WATER MESH (Fix for missing water)
     waterMesh.instanceMatrix.needsUpdate = true;
     if (waterMesh.instanceColor) waterMesh.instanceColor.needsUpdate = true;
-    waSideColorAttr.needsUpdate = true;
-    
-    opaqueMaterial.needsUpdate = true;
+    waAttrs.top.needsUpdate = true;
+    waAttrs.side.needsUpdate = true;
+    waAttrs.height.needsUpdate = true;
+    waAttrs.cap.needsUpdate = true;
     waterMaterial.needsUpdate = true;
 
   }, [chunks, playerPosition, renderDistance, maxCount, opaqueGeometry, waterGeometry, opaqueMaterial, waterMaterial]);
