@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { Vector3, ChunkData, GameState } from '../types';
 import { BlockType } from '../blocks';
 import { getBlockFromChunk, getTerrainHeight } from '../services/TerrainGenerator';
-import ChunkMesh from './ChunkMesh';
+import ChunkMesh, { sharedWaterMaterial } from './ChunkMesh';
 import DistantTerrain from './DistantTerrain';
 import Player from './Player';
 import { CHUNK_SIZE, WORLD_HEIGHT, MAX_RENDER_DISTANCE } from '../constants';
@@ -200,7 +200,8 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) 
       return () => chunkLoader.terminate();
   }, [chunkLoader]);
 
-  useFrame(({ camera }) => {
+  useFrame(({ camera, clock }) => {
+      // Light Following
       if (lightRef.current) {
           const cx = camera.position.x;
           const cz = camera.position.z;
@@ -208,6 +209,10 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) 
           lightRef.current.target.position.set(cx, 0, cz);
           lightRef.current.target.updateMatrixWorld();
       }
+
+      // GLOBAL Uniform Update for Water (Optimization)
+      // Instead of updating every single chunk mesh, we update the shared material once per frame.
+      sharedWaterMaterial.uniforms.uTime.value = clock.getElapsedTime();
   });
 
   useFrame(() => {
@@ -223,7 +228,8 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) 
       }
 
       let requestedCount = 0;
-      const MAX_REQUESTS_PER_FRAME = 4; 
+      // Increased request rate since we now have a worker pool
+      const MAX_REQUESTS_PER_FRAME = 8; 
       const MAX_SCAN_OPS = 400;
 
       let ops = 0;

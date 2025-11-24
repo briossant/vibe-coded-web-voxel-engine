@@ -1,12 +1,9 @@
 
-
 import { ChunkData } from '../types';
 import { getAllBlocks, BlockType } from '../blocks';
 import { TEXTURE_ATLAS_SIZE } from '../constants';
 
 // --- INLINED WORKER CODE ---
-// We inline this to avoid file serving issues in the preview environment.
-// This script contains the logic from TerrainMath.ts and GenerationLogic.ts
 const WORKER_SCRIPT = `
 /* eslint-disable */
 // --- MATH UTILS (from TerrainMath.ts) ---
@@ -876,7 +873,8 @@ function computeChunkMesh(ctx, chunkData, neighbors) {
     
     const toBuffers = (obj) => {
         return {
-            positions: new Float32Array(obj.positions),
+            // Optimization: Use Int16 for positions to save memory (chunk coords are small)
+            positions: new Int16Array(obj.positions),
             normals: new Float32Array(obj.normals),
             uvs: new Float32Array(obj.uvs),
             indices: new Uint32Array(obj.indices),
@@ -983,11 +981,12 @@ self.onmessage = function(e) {
 `;
 
 export class ChunkLoader {
-  private worker: Worker | null = null;
+  private workers: Worker[] = [];
   private onChunkLoaded: (chunk: ChunkData) => void;
   private meshCallbacks: Map<number, (data: any) => void>;
   private reqIdCounter: number;
   private seed: number;
+  private nextWorkerIndex: number = 0;
 
   constructor(seed: number, onChunkLoaded: (chunk: ChunkData) => void) {
     this.seed = seed;
@@ -995,57 +994,67 @@ export class ChunkLoader {
     this.meshCallbacks = new Map();
     this.reqIdCounter = 0;
 
-    this.initWorker();
+    this.initWorkers();
   }
 
-  private initWorker() {
+  private initWorkers() {
     if (typeof window === 'undefined') return;
 
     // Create Worker from Blob
     const blob = new Blob([WORKER_SCRIPT], { type: 'application/javascript' });
     const url = URL.createObjectURL(blob);
     
-    this.worker = new Worker(url);
+    // Optimization: Use a pool of workers matching hardware concurrency to parallelize chunk generation
+    const workerCount = Math.max(2, navigator.hardwareConcurrency || 4);
     
-    // Initialize the worker with static data
-    this.worker.postMessage({
-        type: 'INIT',
-        blocks: BlockType,
-        blockDefs: getAllBlocks(),
-        atlasSize: TEXTURE_ATLAS_SIZE
-    });
+    for (let i = 0; i < workerCount; i++) {
+        const worker = new Worker(url);
+        
+        // Initialize the worker with static data
+        worker.postMessage({
+            type: 'INIT',
+            blocks: BlockType,
+            blockDefs: getAllBlocks(),
+            atlasSize: TEXTURE_ATLAS_SIZE
+        });
 
-    this.worker.onmessage = (e: MessageEvent) => {
-       const msg = e.data;
-       if (msg.type === 'CHUNK') {
-           const chunk = msg.chunk;
-           chunk.data = new Uint8Array(chunk.data);
-           chunk.heightMap = new Int16Array(chunk.heightMap);
-           chunk.topLayer = new Uint8Array(chunk.topLayer);
-           this.onChunkLoaded(chunk);
-       } else if (msg.type === 'MESH') {
-           const cb = this.meshCallbacks.get(msg.reqId);
-           if (cb) {
-               this.meshCallbacks.delete(msg.reqId);
-               cb(msg.mesh);
+        worker.onmessage = (e: MessageEvent) => {
+           const msg = e.data;
+           if (msg.type === 'CHUNK') {
+               const chunk = msg.chunk;
+               chunk.data = new Uint8Array(chunk.data);
+               chunk.heightMap = new Int16Array(chunk.heightMap);
+               chunk.topLayer = new Uint8Array(chunk.topLayer);
+               this.onChunkLoaded(chunk);
+           } else if (msg.type === 'MESH') {
+               const cb = this.meshCallbacks.get(msg.reqId);
+               if (cb) {
+                   this.meshCallbacks.delete(msg.reqId);
+                   cb(msg.mesh);
+               }
            }
-       }
-    };
+        };
 
-    this.worker.onerror = (e) => {
-        console.error("Worker Error:", e);
-    };
+        worker.onerror = (e) => {
+            console.error(`Worker ${i} Error:`, e);
+        };
+        
+        this.workers.push(worker);
+    }
   }
 
   requestChunk(cx: number, cz: number) {
-    if (this.worker) {
-        this.worker.postMessage({ type: 'GENERATE', cx, cz, seed: this.seed });
+    if (this.workers.length > 0) {
+        // Round robin distribution
+        const worker = this.workers[this.nextWorkerIndex];
+        worker.postMessage({ type: 'GENERATE', cx, cz, seed: this.seed });
+        this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.workers.length;
     }
   }
 
   requestMesh(chunk: ChunkData, neighbors: any): Promise<any> {
       return new Promise((resolve) => {
-          if (!this.worker) return; 
+          if (this.workers.length === 0) return; 
 
           const reqId = this.reqIdCounter++;
           this.meshCallbacks.set(reqId, resolve);
@@ -1057,18 +1066,20 @@ export class ChunkLoader {
               pz: neighbors.pz?.data,
           };
 
-          this.worker.postMessage({
+          // Round robin mesh requests as well
+          const worker = this.workers[this.nextWorkerIndex];
+          worker.postMessage({
               type: 'MESH',
               reqId,
               chunkData: chunk.data,
               neighbors: nData
           });
+          this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.workers.length;
       });
   }
 
   terminate() {
-    if (this.worker) {
-        this.worker.terminate();
-    }
+    this.workers.forEach(w => w.terminate());
+    this.workers = [];
   }
 }
