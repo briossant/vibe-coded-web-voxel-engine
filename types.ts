@@ -81,6 +81,7 @@ export interface BlockDefinition {
   mapColor: string; // Hex for distant terrain/minimap
 }
 
+// Augmentations for React Three Fiber components
 declare global {
   namespace JSX {
     interface IntrinsicElements {
@@ -99,6 +100,32 @@ declare global {
       color: any;
       fogExp2: any;
       shaderMaterial: any;
+      instancedBufferAttribute: any;
+      [elemName: string]: any;
+    }
+  }
+}
+
+// Augment React's module JSX namespace for strict module resolution or newer React versions
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements {
+      group: any;
+      mesh: any;
+      meshStandardMaterial: any;
+      meshBasicMaterial: any;
+      instancedMesh: any;
+      boxGeometry: any;
+      planeGeometry: any;
+      primitive: any;
+      ambientLight: any;
+      directionalLight: any;
+      hemisphereLight: any;
+      pointLight: any;
+      color: any;
+      fogExp2: any;
+      shaderMaterial: any;
+      instancedBufferAttribute: any;
       [elemName: string]: any;
     }
   }

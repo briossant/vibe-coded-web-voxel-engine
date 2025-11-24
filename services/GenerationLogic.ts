@@ -1,3 +1,4 @@
+
 import { BlockType } from '../blocks.js';
 
 // We define the context that will be passed to the worker function.
@@ -462,20 +463,33 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
     const finalHeightMap = new Int16Array(CHUNK_SIZE * CHUNK_SIZE);
     const finalTopLayer = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
 
+    const isIgnoredForMap = (id: number) => {
+        return (
+            id === BLOCKS.AIR ||
+            // Leaves
+            id === BLOCKS.OAK_LEAVES || id === BLOCKS.BIRCH_LEAVES || id === BLOCKS.SPRUCE_LEAVES || 
+            id === BLOCKS.JUNGLE_LEAVES || id === BLOCKS.ACACIA_LEAVES ||
+            // Logs
+            id === BLOCKS.OAK_LOG || id === BLOCKS.BIRCH_LOG || id === BLOCKS.SPRUCE_LOG || 
+            id === BLOCKS.JUNGLE_LOG || id === BLOCKS.ACACIA_LOG ||
+            // Flora & Decoration
+            id === BLOCKS.TALL_GRASS || id === BLOCKS.FLOWER_YELLOW || id === BLOCKS.FLOWER_RED ||
+            id === BLOCKS.CACTUS || id === BLOCKS.DEAD_BUSH || 
+            (id >= BLOCKS.TULIP_RED && id <= BLOCKS.CORNFLOWER) || 
+            id === BLOCKS.MELON || id === BLOCKS.BLUE_ORCHID || id === BLOCKS.SEAGRASS || id === BLOCKS.SEA_LANTERN
+        );
+    };
+
     for (let x=0; x<CHUNK_SIZE; x++) {
        for (let z=0; z<CHUNK_SIZE; z++) {
-           // Find top block
            let y = WORLD_HEIGHT - 1;
-           let blk = chunkBuffer[getIndex(x,y,z)];
-           
-           // Optimized search down
-           while(y > 0 && blk === BLOCKS.AIR) {
+           // Optimize down scan by skipping foliage/trees to provide a clean terrain surface
+           // This prevents trees from appearing as solid pillars in Distant Terrain
+           while(y > 0 && isIgnoredForMap(chunkBuffer[getIndex(x,y,z)])) {
                y--;
-               blk = chunkBuffer[getIndex(x,y,z)];
            }
-           
            finalHeightMap[x*CHUNK_SIZE+z] = y;
-           finalTopLayer[x*CHUNK_SIZE+z] = blk;
+           finalTopLayer[x*CHUNK_SIZE+z] = chunkBuffer[getIndex(x,y,z)];
        }
     }
 
