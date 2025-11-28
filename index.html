@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>NeuroVoxel Engine</title>
+    <title>Voxel Engine</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       html, body, #root {
@@ -21,6 +21,14 @@
         image-rendering: pixelated;
         image-rendering: -moz-crisp-edges;
         image-rendering: crisp-edges;
+      }
+      /* Position Stats panel to top-right */
+      .stats-panel {
+        top: 0px !important;
+        right: 0px !important;
+        left: auto !important;
+        position: absolute !important;
+        z-index: 10000 !important;
       }
     </style>
   <script type="importmap">

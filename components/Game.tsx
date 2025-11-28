@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Sky, Stats, Stars } from '@react-three/drei';
@@ -6,7 +5,7 @@ import * as THREE from 'three';
 import { Vector3, ChunkData, GameState } from '../types';
 import { BlockType } from '../blocks';
 import { getBlockFromChunk, getTerrainHeight } from '../services/TerrainGenerator';
-import ChunkMesh, { sharedWaterMaterial } from './ChunkMesh';
+import ChunkMesh from './ChunkMesh';
 import DistantTerrain from './DistantTerrain';
 import Player from './Player';
 import { CHUNK_SIZE, WORLD_HEIGHT, MAX_RENDER_DISTANCE } from '../constants';
@@ -151,6 +150,9 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) 
   const chunksRef = useRef<Map<string, ChunkData>>(new Map());
   const [chunkVersion, setChunkVersion] = useState(0); 
   
+  // BATCHING UPDATE REF
+  const pendingUpdateRef = useRef(false);
+
   const pendingChunks = useRef<Set<string>>(new Set());
   const spiralRef = useRef({ x: 0, y: 0, dx: 0, dy: -1 });
   const chunkScanRef = useRef<{ cx: number, cz: number, index: number }>({ cx: 0, cz: 0, index: 0 });
@@ -177,31 +179,26 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) 
         const cz = Math.floor(pz / CHUNK_SIZE);
         const limit = renderDistRef.current + 4; // Buffer
 
-        let deleted = false;
         // Optimization: Don't scan entire map every single chunk load if map is huge.
         // But map size is ~1000 items, iteration is fast in JS (microsecond scale).
         for (const [key, val] of chunksRef.current) {
              // Simple Manhattan distance check for speed first or just simple rectangular bounds
              if (Math.abs(val.x - cx) > limit || Math.abs(val.z - cz) > limit) {
                  chunksRef.current.delete(key);
-                 deleted = true;
              }
         }
         
-        // Update App debug info (throttled/batched by React nature, effectively)
-        onChunkCountChange(chunksRef.current.size);
-
-        // Force component update to render new meshes
-        setChunkVersion(v => v + 1);
+        // Flag for update in next frame instead of setting state immediately
+        pendingUpdateRef.current = true;
     });
-  }, [gameState.seed, onChunkCountChange]);
+  }, [gameState.seed]); // Removed onChunkCountChange to avoid recreating loader
 
   useEffect(() => {
       return () => chunkLoader.terminate();
   }, [chunkLoader]);
 
-  useFrame(({ camera, clock }) => {
-      // Light Following
+  useFrame(({ camera }) => {
+      // 1. Lighting Update
       if (lightRef.current) {
           const cx = camera.position.x;
           const cz = camera.position.z;
@@ -210,9 +207,13 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) 
           lightRef.current.target.updateMatrixWorld();
       }
 
-      // GLOBAL Uniform Update for Water (Optimization)
-      // Instead of updating every single chunk mesh, we update the shared material once per frame.
-      sharedWaterMaterial.uniforms.uTime.value = clock.getElapsedTime();
+      // 2. Batched State Update
+      // Only trigger React reconciliation once per frame max
+      if (pendingUpdateRef.current) {
+          setChunkVersion(v => v + 1);
+          onChunkCountChange(chunksRef.current.size);
+          pendingUpdateRef.current = false;
+      }
   });
 
   useFrame(() => {
@@ -228,8 +229,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) 
       }
 
       let requestedCount = 0;
-      // Increased request rate since we now have a worker pool
-      const MAX_REQUESTS_PER_FRAME = 8; 
+      const MAX_REQUESTS_PER_FRAME = 4; 
       const MAX_SCAN_OPS = 400;
 
       let ops = 0;
@@ -269,6 +269,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) 
       const cz = playerChunkZ;
       const highResLimit = gameState.renderDistance;
 
+      // Iterating Map.values() is reasonably fast for N < 5000
       for (const chunk of chunksRef.current.values()) {
           const dx = Math.abs(chunk.x - cx);
           const dz = Math.abs(chunk.z - cz);
@@ -388,7 +389,7 @@ const Game: React.FC<GameProps> = ({ gameState, setIsUnderwater, onChunkCountCha
     return (
     <Canvas shadows camera={{ fov: 70, near: 0.1, far: MAX_RENDER_DISTANCE * CHUNK_SIZE }}>
       <GameScene gameState={enhancedGameState} onChunkCountChange={onChunkCountChange} />
-      {gameState.debugMode && <Stats />}
+      {gameState.debugMode && <Stats className="stats-panel" />}
     </Canvas>
   );
 };

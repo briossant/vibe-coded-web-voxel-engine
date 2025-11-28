@@ -1,6 +1,7 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { useFrame } from '@react-three/fiber';
 import { ChunkData } from '../types';
 import { CHUNK_SIZE } from '../constants';
 import { globalTexture } from '../utils/textures';
@@ -15,25 +16,8 @@ interface ChunkMeshProps {
   chunkLoader: ChunkLoader;
 }
 
-// --- Shared Materials (Optimization: Instancing) ---
-
-export const sharedStandardMaterial = new THREE.MeshStandardMaterial({
-    map: globalTexture,
-    vertexColors: true,
-    roughness: 0.8,
-    metalness: 0.1,
-});
-
-export const sharedFoliageMaterial = new THREE.MeshStandardMaterial({
-    map: globalTexture,
-    vertexColors: true,
-    alphaTest: 0.3,
-    transparent: true,
-    side: THREE.DoubleSide,
-    roughness: 0.8,
-});
-
-export const sharedWaterMaterial = new THREE.ShaderMaterial({
+// --- Shader for Water ---
+const WaterShaderMaterial = {
     uniforms: {
         uTime: { value: 0 },
         uTexture: { value: globalTexture },
@@ -50,11 +34,14 @@ export const sharedWaterMaterial = new THREE.ShaderMaterial({
         void main() {
             vUv = uv;
             
+            // Calculate world position for seamless waves across chunks
             vec4 worldPosition = modelMatrix * vec4(position, 1.0);
             vec3 pos = worldPosition.xyz;
             
+            // Wave function using world coordinates
             float wave = sin(pos.x * 0.5 + uTime) * 0.1 + cos(pos.z * 0.4 + uTime * 0.8) * 0.1;
             
+            // Apply wave to local Y position
             vec3 newPos = position;
             newPos.y += wave * 0.5;
             vElevation = wave;
@@ -93,12 +80,18 @@ export const sharedWaterMaterial = new THREE.ShaderMaterial({
 
             gl_FragColor = vec4(finalColor, 0.75); 
         }
-    `,
-    transparent: true
-});
+    `
+};
 
 const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors, chunkLoader }) => {
+  const materialRef = useRef<THREE.ShaderMaterial>(null);
   const [geometryData, setGeometryData] = useState<{ opaque: THREE.BufferGeometry, foliage: THREE.BufferGeometry, water: THREE.BufferGeometry } | null>(null);
+
+  useFrame(({ clock }) => {
+      if (materialRef.current) {
+          materialRef.current.uniforms.uTime.value = clock.getElapsedTime();
+      }
+  });
 
   useEffect(() => {
       let isMounted = true;
@@ -108,7 +101,7 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors, chunk
 
           const createGeo = (d: any, hasColor: boolean) => {
               const geo = new THREE.BufferGeometry();
-              // positions are Int16 from worker now (Optimization)
+              // Use TypedArrays directly from worker
               geo.setAttribute('position', new THREE.BufferAttribute(d.positions, 3));
               geo.setAttribute('normal', new THREE.BufferAttribute(d.normals, 3));
               geo.setAttribute('uv', new THREE.BufferAttribute(d.uvs, 2));
@@ -124,12 +117,7 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors, chunk
           });
       });
 
-      return () => { 
-          isMounted = false;
-          // Geometries are automatically disposed by React Three Fiber if attached to a primitive,
-          // but since we are managing state manually, explicit disposal is good practice if we were unmounting often.
-          // However, React handles the mesh unmount. We let GC handle the geometry objects created here.
-      };
+      return () => { isMounted = false; };
   }, [chunk, neighbors, chunkLoader]);
 
   if (!geometryData) return null;
@@ -138,36 +126,51 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors, chunk
     <group position={[chunk.x * CHUNK_SIZE, 0, chunk.z * CHUNK_SIZE]}>
         <mesh 
             geometry={geometryData.opaque}
-            material={sharedStandardMaterial}
             castShadow={lodLevel === 0}
             receiveShadow={lodLevel === 0}
-        />
+        >
+            <meshStandardMaterial 
+                map={globalTexture} 
+                vertexColors
+                roughness={0.8} 
+                metalness={0.1}
+            />
+        </mesh>
 
         <mesh 
             geometry={geometryData.foliage}
-            material={sharedFoliageMaterial}
             castShadow={lodLevel === 0}
             receiveShadow={lodLevel === 0}
-        />
+        >
+            <meshStandardMaterial 
+                map={globalTexture} 
+                vertexColors
+                alphaTest={0.3}
+                transparent={true}
+                side={THREE.DoubleSide}
+                roughness={0.8}
+            />
+        </mesh>
 
-        <mesh 
-            geometry={geometryData.water}
-            material={sharedWaterMaterial}
-            receiveShadow={lodLevel === 0}
-        />
+        <mesh geometry={geometryData.water} receiveShadow={lodLevel === 0}>
+             <shaderMaterial 
+                ref={materialRef}
+                attach="material"
+                {...WaterShaderMaterial}
+                transparent={true}
+             />
+        </mesh>
     </group>
   );
 };
 
-// Equality check for React.memo
 const arePropsEqual = (prev: ChunkMeshProps, next: ChunkMeshProps) => {
     return prev.chunk === next.chunk && 
            prev.lodLevel === next.lodLevel &&
-           // Deep check neighbors IDs only
-           prev.neighbors?.nx?.id === next.neighbors?.nx?.id &&
-           prev.neighbors?.px?.id === next.neighbors?.px?.id &&
-           prev.neighbors?.nz?.id === next.neighbors?.nz?.id &&
-           prev.neighbors?.pz?.id === next.neighbors?.pz?.id;
+           prev.neighbors?.nx === next.neighbors?.nx &&
+           prev.neighbors?.px === next.neighbors?.px &&
+           prev.neighbors?.nz === next.neighbors?.nz &&
+           prev.neighbors?.pz === next.neighbors?.pz;
 };
 
 export default React.memo(ChunkMesh, arePropsEqual);

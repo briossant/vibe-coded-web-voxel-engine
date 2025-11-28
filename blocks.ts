@@ -79,8 +79,8 @@ const registerAll = () => {
 
     // Natural Blocks - Darker/Richer Palette for Distant Terrain
     reg(simple(BlockType.DIRT, 'Dirt', 'Nature', 1, '#3B2A22')); // Deep brown
-    reg(createBlock(BlockType.GRASS, 'Grass', 'Nature', 3, 2, 1, '#547A38')); // Deep forest green
-    reg(simple(BlockType.STONE, 'Stone', 'Nature', 30, '#444444')); // Deep gray
+    reg(createBlock(BlockType.GRASS, 'Grass', 'Nature', 3, 2, 1, '#447A38')); // Deep forest green
+    reg(simple(BlockType.STONE, 'Stone', 'Nature', 30, '#333333')); // Deep gray
     
     reg(column(BlockType.OAK_LOG, 'Oak Log', 'Wood', 27, 4, '#4A3C2E'));
     reg(simple(BlockType.OAK_LEAVES, 'Oak Leaves', 'Wood', 5, '#2D4A22', { isTransparent: true }));
@@ -90,7 +90,7 @@ const registerAll = () => {
     
     reg(simple(BlockType.SAND, 'Sand', 'Nature', 7, '#C2B280'));
     reg(simple(BlockType.BEDROCK, 'Bedrock', 'Nature', 8, '#111111'));
-    reg(simple(BlockType.SNOW, 'Snow', 'Nature', 9, '#C0C0C0'));
+    reg(simple(BlockType.SNOW, 'Snow', 'Nature', 9, '#E0E0E0'));
     
     reg(plant(BlockType.TALL_GRASS, 'Tall Grass', 10, '#3A5025'));
     reg(plant(BlockType.FLOWER_YELLOW, 'Dandelion', 11, '#D4B030'));

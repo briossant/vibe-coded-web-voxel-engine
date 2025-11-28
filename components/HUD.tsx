@@ -8,15 +8,17 @@ interface HUDProps {
   gameState: GameState & { isUnderwater: boolean };
 }
 
-const HUD: React.FC<HUDProps> = ({ gameState }) => {
+const HUD: React.FC = () => {
+  return (<div></div>);
+};
+
+const HUDComponent: React.FC<HUDProps> = ({ gameState }) => {
   const { 
       playerPosition, 
       renderDistance, 
       updateRenderDistance, 
       updateExtraRenderDistance,
       extraRenderDistance,
-      toggleDebug, 
-      debugMode, 
       seed, 
       isUnderwater,
       hotbar,
@@ -38,23 +40,18 @@ const HUD: React.FC<HUDProps> = ({ gameState }) => {
         />
 
         <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 z-10">
-        {/* Top Left: Debug Info */}
-        <div className="flex flex-col gap-2 items-start pointer-events-auto">
-            <h1 className="text-white font-bold text-xl drop-shadow-md">NeuroVoxel v0.7 (Refactored)</h1>
+        {/* Top Left: Debug Info - Adjusted top margin */}
+        <div className="flex flex-col gap-2 items-start pointer-events-auto mt-0">
+            <h1 className="text-white font-bold text-xl drop-shadow-md">Voxel Engine v0.7</h1>
             <div className="bg-black/50 p-3 rounded text-white text-xs font-mono backdrop-blur-sm border border-white/10">
             <p>POS: {playerPosition.map(n => n.toFixed(1)).join(', ')}</p>
             <p>Chunks Loaded: {chunkCount}</p>
             <p className="text-gray-400">Seed: <span className="text-yellow-400">{seed}</span></p>
-            <div className="mt-2 flex gap-2">
-                <button onClick={toggleDebug} className="bg-white/20 hover:bg-white/40 px-2 py-1 rounded transition">
-                    {debugMode ? 'Hide Stats' : 'Show Stats'}
-                </button>
-            </div>
             
             <div className="mt-2">
                 <label className="block text-[10px] text-gray-300">Render Distance ({renderDistance})</label>
                 <input 
-                    type="range" min="8" max="64" value={renderDistance} 
+                    type="range" min="2" max="16" value={renderDistance} 
                     onChange={(e) => updateRenderDistance(parseInt(e.target.value))}
                     className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer mt-1"
                 />
@@ -108,7 +105,7 @@ const HUD: React.FC<HUDProps> = ({ gameState }) => {
             </div>
             <div className="text-white/70 text-xs text-center font-sans">
                 <p className="bg-black/30 inline-block px-4 py-1 rounded-full backdrop-blur-sm">
-                WASD Move • E Inventory • 1-9 Select Item • CLICK Mine/Place
+                WASD Move • F Fly • SHIFT Sprint • E Inventory • 1-9 Select Item • CLICK Mine/Place
                 </p>
             </div>
         </div>
@@ -117,4 +114,4 @@ const HUD: React.FC<HUDProps> = ({ gameState }) => {
   );
 };
 
-export default HUD;
+export default HUDComponent;

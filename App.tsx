@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import Game from './components/Game';
 import HUD from './components/HUD';
@@ -17,10 +16,10 @@ const App: React.FC = () => {
   const [playerPosition, setPlayerPosition] = useState<Vector3>([0, 80, 0]);
   
   // Dual Render Distance Settings
-  const [renderDistance, setRenderDistance] = useState<number>(12); // High Res
-  const [extraRenderDistance, setExtraRenderDistance] = useState<number>(20); // Low Res
+  const [renderDistance, setRenderDistance] = useState<number>(6); // High Res default 6
+  const [extraRenderDistance, setExtraRenderDistance] = useState<number>(16); // Low Res default 16
 
-  const [debugMode, setDebugMode] = useState<boolean>(false);
+  const [debugMode, setDebugMode] = useState<boolean>(true); // Default to true for FPS counter
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
   const [isUnderwater, setIsUnderwater] = useState<boolean>(false);
 
