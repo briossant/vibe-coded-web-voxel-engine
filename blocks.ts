@@ -86,7 +86,7 @@ const registerAll = () => {
     reg(simple(BlockType.OAK_LEAVES, 'Oak Leaves', 'Wood', 5, '#2D4A22', { isTransparent: true }));
     
     // Light Blue for better visibility at distance
-    reg(simple(BlockType.WATER, 'Water', 'Nature', 6, '#5e9cd9', { isSolid: false, isFluid: true, isTransparent: true }));
+    reg(simple(BlockType.WATER, 'Water', 'Nature', 6, '#0e7cef', { isSolid: false, isFluid: true, isTransparent: true }));
     
     reg(simple(BlockType.SAND, 'Sand', 'Nature', 7, '#C2B280'));
     reg(simple(BlockType.BEDROCK, 'Bedrock', 'Nature', 8, '#111111'));

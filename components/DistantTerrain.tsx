@@ -33,6 +33,7 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
   const maxCount = 400000; 
 
   const { opaqueGeometry, waterGeometry, opaqueMaterial, waterMaterial } = useMemo(() => {
+    // 1. Opaque Geometry (Box)
     const baseGeo = new THREE.BoxGeometry(1, 1, 1);
     baseGeo.translate(0, 0.5, 0); // Pivot at bottom
     
@@ -52,7 +53,18 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
     baseGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 
     const opGeo = baseGeo.clone();
-    const waGeo = baseGeo.clone();
+
+    // 2. Water Geometry (Plane)
+    // Use a plane for water to avoid rendering side faces which cause z-fighting and opacity artifacts
+    const waGeo = new THREE.PlaneGeometry(1, 1);
+    waGeo.rotateX(-Math.PI / 2); // Face up
+    waGeo.translate(0, 1, 0); // Move to top of the unit height (so when scaled, it sits at the surface)
+    
+    // Add uniform lighting for the plane (top face = full brightness)
+    const wColors: number[] = [];
+    const wCount = waGeo.attributes.position.count;
+    for(let i=0; i<wCount; i++) wColors.push(1.0, 1.0, 1.0);
+    waGeo.setAttribute('color', new THREE.Float32BufferAttribute(wColors, 3));
 
     // Custom Shader: Mix Top and Side colors based on height threshold
     const onBeforeCompile = (shader: any) => {
@@ -118,8 +130,9 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
     const waMat = new THREE.MeshBasicMaterial({ 
         vertexColors: true, 
         transparent: true, 
-        opacity: 0.80, 
-        depthWrite: false 
+        opacity: 0.70, 
+        depthWrite: false,
+        side: THREE.DoubleSide
     });
     waMat.onBeforeCompile = onBeforeCompile;
 
