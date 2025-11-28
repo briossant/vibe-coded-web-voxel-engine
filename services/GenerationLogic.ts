@@ -733,22 +733,14 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
                 const typeDef = getBlockDef(type);
                 const isSeagrass = type === 34; 
                 
-                // 1. Render 'Bushy' Cross for Leaves
-                // We render this IN ADDITION to the block volume for a very dense, bushy look
-                if (LEAF_IDS.has(type)) {
-                    const [u, v] = getUVOffset(type, [1, 0, 0]); // Use side texture
-                    // Scale 1.3 makes the leaves stick out and overlap neighbors slightly
-                    addCross(x, y, z, u, v, 1.3);
-                }
-                
-                // 2. Render Sprites (Flowers, Grass)
+                // 1. Render Sprites (Flowers, Grass)
                 if (typeDef.isSprite) {
                     const [u, v] = getUVOffset(type, [0, 1, 0]);
                     addCross(x, y, z, u, v, 1.0);
                     if (!isSeagrass) continue;
                 }
 
-                // 3. Volume Rendering (Cubes)
+                // 2. Volume Rendering (Cubes)
                 const isBlockWater = type === 6 || isSeagrass; 
                 const volumeType = isBlockWater ? 6 : type;
                 const isBlockFoliage = typeDef.isTransparent && !isBlockWater && !isSeagrass;

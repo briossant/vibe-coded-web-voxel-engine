@@ -820,10 +820,6 @@ function computeChunkMesh(ctx, chunkData, neighbors) {
                 const typeDef = getBlockDef(type);
                 const isSeagrass = type === 34; 
                 
-                if (LEAF_IDS.has(type)) {
-                    const [u, v] = getUVOffset(type, [1, 0, 0]); 
-                    addCross(x, y, z, u, v, 1.3);
-                }
                 if (typeDef.isSprite) {
                     const [u, v] = getUVOffset(type, [0, 1, 0]);
                     addCross(x, y, z, u, v, 1.0);
