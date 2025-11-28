@@ -1,4 +1,5 @@
 
+
 import { BlockType } from '../blocks.js';
 
 // We define the context that will be passed to the worker function.
@@ -46,8 +47,8 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
 
     const getIndex = (x: number, y: number, z: number) => (x * WORLD_HEIGHT + y) * CHUNK_SIZE + z;
 
-    // 3D Hash Helper
-    const hash3 = (x: number, y: number, z: number) => hash(x + y * 31, z, SEED);
+    // UPDATED: hash3 now uses World Coordinates to ensure trees are generated identically across chunk boundaries.
+    const hash3 = (x: number, y: number, z: number) => hash((worldX + x) + y * 31, (worldZ + z), SEED);
 
     function safeSetBlock(x: number, y: number, z: number, block: number) {
         if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE && y >= 0 && y < WORLD_HEIGHT) {
@@ -60,11 +61,6 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
             
             const isNewLog = block === BLOCKS.OAK_LOG || block === BLOCKS.BIRCH_LOG || block === BLOCKS.SPRUCE_LOG || 
                              block === BLOCKS.ACACIA_LOG || block === BLOCKS.JUNGLE_LOG;
-
-            // Logic:
-            // 1. Always overwrite AIR.
-            // 2. Always overwrite Water/Plants (Foliage).
-            // 3. If current is Leaves, only overwrite if we are placing Logs. (Branches cutting through leaves).
             
             if (current === BLOCKS.AIR || isCurrentFoliage) {
                 const isCurrentLeaf = current === BLOCKS.OAK_LEAVES || current === BLOCKS.BIRCH_LEAVES || 
@@ -170,9 +166,12 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
                     const startH = Math.floor(height * 0.4) + Math.floor(hash3(x, b, z) * (height * 0.4));
                     
                     // Direction
-                    const angle = hash3(b, y, x) * Math.PI * 2;
-                    const len = 3 + hash3(z, b, y) * 3; // 3-6 length
-                    const lift = 1 + hash3(x, z, b) * 3; // 1-4 upward
+                    // UPDATED: hash3(x, y+b*7, z) instead of hash3(b, y, x)
+                    const angle = hash3(x, y + b*7, z) * Math.PI * 2;
+                    // UPDATED: hash3(x, b, z+50) instead of hash3(z, b, y)
+                    const len = 3 + hash3(x, b, z + 50) * 3; 
+                    // UPDATED: hash3(x, z + b*5, z) instead of hash3(x, z, b)
+                    const lift = 1 + hash3(x, z + b*5, z) * 3; 
                     
                     const bx = x + Math.cos(angle) * len;
                     const bz = z + Math.sin(angle) * len;
@@ -248,15 +247,18 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
              const forkH = Math.max(2, Math.floor(height * 0.6));
              placeLogLine(x, y, z, x, y+forkH, z, logType);
              
-             const numBranches = 2 + (hash3(x,z,y) > 0.5 ? 1 : 0);
+             // UPDATED: hash3(x, y+z, z) instead of hash3(x,z,y)
+             const numBranches = 2 + (hash3(x, y + z, z) > 0.5 ? 1 : 0);
              
              for(let i=0; i<numBranches; i++) {
                  // Angle spread
                  const ang = (Math.PI * 2 * i) / numBranches + hash3(x,i,z);
-                 const len = 2 + hash3(z,i,y) * 3;
+                 // UPDATED: hash3(x, i + y, z + 2) instead of hash3(z,i,y)
+                 const len = 2 + hash3(x, i + y, z + 2) * 3;
                  const bx = x + Math.cos(ang) * len;
                  const bz = z + Math.sin(ang) * len;
-                 const by = y + height + (hash3(x,z,i) * 2 - 1);
+                 // UPDATED: hash3(x, z + i, z) instead of hash3(x,z,i)
+                 const by = y + height + (hash3(x, z + i, z) * 2 - 1);
                  
                  placeLogLine(x, y+forkH, z, Math.floor(bx), Math.floor(by), Math.floor(bz), logType);
                  placeLeafLayer(Math.floor(bx), Math.floor(by), Math.floor(bz), 2.5, leafType);
@@ -280,8 +282,10 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
             // Occasional side bushes / vines
             for(let i=5; i<height-6; i+=4) {
                 if (hash3(x,i,z) > 0.3) {
-                    const dir = hash3(z,i,x) * Math.PI * 2;
-                    const len = 2 + hash3(x,z,i) * 3;
+                    // UPDATED: hash3(x, i, z + 13) instead of hash3(z,i,x)
+                    const dir = hash3(x, i, z + 13) * Math.PI * 2;
+                    // UPDATED: hash3(x, z + i, z) instead of hash3(x,z,i)
+                    const len = 2 + hash3(x, z + i, z) * 3;
                     const bx = x + Math.cos(dir) * len;
                     const bz = z + Math.sin(dir) * len;
                     
@@ -381,7 +385,8 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
     }
 
     // 2. DECORATION PASS (Trees, Flowers, Ores)
-    const TREE_MARGIN = 6; 
+    // UPDATED: Increased TREE_MARGIN to 12.
+    const TREE_MARGIN = 12; 
     for (let x = -TREE_MARGIN; x < CHUNK_SIZE + TREE_MARGIN; x++) {
         for (let z = -TREE_MARGIN; z < CHUNK_SIZE + TREE_MARGIN; z++) {
             const wx = worldX + x;

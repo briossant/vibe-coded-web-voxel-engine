@@ -246,7 +246,10 @@ function computeChunk(ctx, cx, cz) {
     const biomeCounts = {};
 
     const getIndex = (x, y, z) => (x * WORLD_HEIGHT + y) * CHUNK_SIZE + z;
-    const hash3 = (x, y, z) => hash(x + y * 31, z, SEED);
+    
+    // UPDATED: hash3 now uses World Coordinates to ensure trees are generated identically across chunk boundaries.
+    // x, y, z here are treated as offsets from the chunk origin + local tree coordinates.
+    const hash3 = (x, y, z) => hash((worldX + x) + y * 31, (worldZ + z), SEED);
 
     function safeSetBlock(x, y, z, block) {
         if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE && y >= 0 && y < WORLD_HEIGHT) {
@@ -344,9 +347,13 @@ function computeChunk(ctx, cx, cz) {
                 const numBranches = 3 + Math.floor(hash3(x, height, z) * 3); 
                 for (let b = 0; b < numBranches; b++) {
                     const startH = Math.floor(height * 0.4) + Math.floor(hash3(x, b, z) * (height * 0.4));
-                    const angle = hash3(b, y, x) * Math.PI * 2;
-                    const len = 3 + hash3(z, b, y) * 3; 
-                    const lift = 1 + hash3(x, z, b) * 3; 
+                    // UPDATED: Avoid swapping args in hash3 which breaks coordinate consistency.
+                    // Instead of hash3(b, y, x), use offsets: hash3(x, y + b*7, z).
+                    const angle = hash3(x, y + b*7, z) * Math.PI * 2;
+                    // UPDATED: hash3(x, b, z + 50) instead of hash3(z, b, y)
+                    const len = 3 + hash3(x, b, z + 50) * 3; 
+                    // UPDATED: hash3(x, z, z) instead of hash3(x, z, b) - z in y slot
+                    const lift = 1 + hash3(x, z + b*5, z) * 3; 
                     const bx = x + Math.cos(angle) * len;
                     const bz = z + Math.sin(angle) * len;
                     const by = y + startH + lift;
@@ -393,13 +400,17 @@ function computeChunk(ctx, cx, cz) {
              const height = 5 + Math.floor(rVal * 4);
              const forkH = Math.max(2, Math.floor(height * 0.6));
              placeLogLine(x, y, z, x, y+forkH, z, logType);
-             const numBranches = 2 + (hash3(x,z,y) > 0.5 ? 1 : 0);
+             // UPDATED: hash3(x, y + z, z) instead of hash3(x,z,y)
+             const numBranches = 2 + (hash3(x, y + z, z) > 0.5 ? 1 : 0);
              for(let i=0; i<numBranches; i++) {
+                 // UPDATED: hash3(x, i, z) is OK.
                  const ang = (Math.PI * 2 * i) / numBranches + hash3(x,i,z);
-                 const len = 2 + hash3(z,i,y) * 3;
+                 // UPDATED: hash3(x, i + y, z + 2) instead of hash3(z,i,y)
+                 const len = 2 + hash3(x, i + y, z + 2) * 3;
                  const bx = x + Math.cos(ang) * len;
                  const bz = z + Math.sin(ang) * len;
-                 const by = y + height + (hash3(x,z,i) * 2 - 1);
+                 // UPDATED: hash3(x, z + i, z) instead of hash3(x,z,i)
+                 const by = y + height + (hash3(x, z + i, z) * 2 - 1);
                  placeLogLine(x, y+forkH, z, Math.floor(bx), Math.floor(by), Math.floor(bz), logType);
                  placeLeafLayer(Math.floor(bx), Math.floor(by), Math.floor(bz), 2.5, leafType);
              }
@@ -415,8 +426,10 @@ function computeChunk(ctx, cx, cz) {
             placeLeafBlob(x, y+height, z, 6.5, leafType, 0.7);
             for(let i=5; i<height-6; i+=4) {
                 if (hash3(x,i,z) > 0.3) {
-                    const dir = hash3(z,i,x) * Math.PI * 2;
-                    const len = 2 + hash3(x,z,i) * 3;
+                    // UPDATED: hash3(x, i, z + 13) instead of hash3(z,i,x)
+                    const dir = hash3(x, i, z + 13) * Math.PI * 2;
+                    // UPDATED: hash3(x, z + i, z) instead of hash3(x,z,i)
+                    const len = 2 + hash3(x, z + i, z) * 3;
                     const bx = x + Math.cos(dir) * len;
                     const bz = z + Math.sin(dir) * len;
                     placeLogLine(x, y+i, z, Math.floor(bx), y+i+1, Math.floor(bz), logType);
@@ -508,7 +521,9 @@ function computeChunk(ctx, cx, cz) {
         }
     }
 
-    const TREE_MARGIN = 6; 
+    // UPDATED: Increased TREE_MARGIN to 12 to ensure trees from neighboring chunks (especially Jungle)
+    // are generated correctly even if they spill into this chunk.
+    const TREE_MARGIN = 12; 
     for (let x = -TREE_MARGIN; x < CHUNK_SIZE + TREE_MARGIN; x++) {
         for (let z = -TREE_MARGIN; z < CHUNK_SIZE + TREE_MARGIN; z++) {
             const wx = worldX + x;
