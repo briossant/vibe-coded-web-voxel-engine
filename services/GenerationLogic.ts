@@ -1,5 +1,4 @@
 
-
 import { BlockType } from '../blocks.js';
 
 // We define the context that will be passed to the worker function.
@@ -47,8 +46,8 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
 
     const getIndex = (x: number, y: number, z: number) => (x * WORLD_HEIGHT + y) * CHUNK_SIZE + z;
 
-    // UPDATED: hash3 now uses World Coordinates to ensure trees are generated identically across chunk boundaries.
-    const hash3 = (x: number, y: number, z: number) => hash((worldX + x) + y * 31, (worldZ + z), SEED);
+    // 3D Hash Helper
+    const hash3 = (x: number, y: number, z: number) => hash(x + y * 31, z, SEED);
 
     function safeSetBlock(x: number, y: number, z: number, block: number) {
         if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE && y >= 0 && y < WORLD_HEIGHT) {
@@ -61,6 +60,11 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
             
             const isNewLog = block === BLOCKS.OAK_LOG || block === BLOCKS.BIRCH_LOG || block === BLOCKS.SPRUCE_LOG || 
                              block === BLOCKS.ACACIA_LOG || block === BLOCKS.JUNGLE_LOG;
+
+            // Logic:
+            // 1. Always overwrite AIR.
+            // 2. Always overwrite Water/Plants (Foliage).
+            // 3. If current is Leaves, only overwrite if we are placing Logs. (Branches cutting through leaves).
             
             if (current === BLOCKS.AIR || isCurrentFoliage) {
                 const isCurrentLeaf = current === BLOCKS.OAK_LEAVES || current === BLOCKS.BIRCH_LEAVES || 
@@ -100,8 +104,12 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
                 for (let z = -ir; z <= ir; z++) {
                     const dSq = x*x + y*y + z*z;
                     if (dSq <= rSq) {
+                        // FIX: Use world coordinates for noise check to ensure consistent leaf decay across chunks
+                        const wx = worldX + cx + x;
+                        const wz = worldZ + cz + z;
+                        
                         // Random fluff removal for "natural" look
-                        if (dSq >= rSq - 2 && hash3(cx+x, cy+y, cz+z) > density) continue;
+                        if (dSq >= rSq - 2 && hash3(wx, cy+y, wz) > density) continue;
                         safeSetBlock(cx+x, cy+y, cz+z, block);
                     }
                 }
@@ -125,7 +133,11 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
     }
 
     function placeTree(x: number, y: number, z: number, typeStr: string) {
-        const rVal = hash3(x, y, z);
+        // FIX: Calculate world coordinates for deterministic RNG across chunk borders
+        const wx = worldX + x;
+        const wz = worldZ + z;
+        
+        const rVal = hash3(wx, y, wz);
         
         let logType: number = BLOCKS.OAK_LOG;
         let leafType: number = BLOCKS.OAK_LEAVES;
@@ -153,25 +165,22 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
                 // Trunk
                 placeLogLine(x, y, z, x, y+height-2, z, logType);
                 
-                // Roots
-                if (hash3(x, y, z+1) > 0.4) safeSetBlock(x+1, y, z, logType);
-                if (hash3(x, y, z-1) > 0.4) safeSetBlock(x-1, y, z, logType);
-                if (hash3(x+1, y, z) > 0.4) safeSetBlock(x, y, z+1, logType);
-                if (hash3(x-1, y, z) > 0.4) safeSetBlock(x, y, z-1, logType);
+                // Roots - Use wx/wz for consistent RNG
+                if (hash3(wx, y, wz+1) > 0.4) safeSetBlock(x+1, y, z, logType);
+                if (hash3(wx, y, wz-1) > 0.4) safeSetBlock(x-1, y, z, logType);
+                if (hash3(wx+1, y, wz) > 0.4) safeSetBlock(x, y, z+1, logType);
+                if (hash3(wx-1, y, wz) > 0.4) safeSetBlock(x, y, z-1, logType);
 
                 // Branches
-                const numBranches = 3 + Math.floor(hash3(x, height, z) * 3); // 3-5
+                const numBranches = 3 + Math.floor(hash3(wx, height, wz) * 3); // 3-5
                 for (let b = 0; b < numBranches; b++) {
                     // Branch start height (top 50% of tree)
-                    const startH = Math.floor(height * 0.4) + Math.floor(hash3(x, b, z) * (height * 0.4));
+                    const startH = Math.floor(height * 0.4) + Math.floor(hash3(wx, b, wz) * (height * 0.4));
                     
-                    // Direction
-                    // UPDATED: hash3(x, y+b*7, z) instead of hash3(b, y, x)
-                    const angle = hash3(x, y + b*7, z) * Math.PI * 2;
-                    // UPDATED: hash3(x, b, z+50) instead of hash3(z, b, y)
-                    const len = 3 + hash3(x, b, z + 50) * 3; 
-                    // UPDATED: hash3(x, z + b*5, z) instead of hash3(x, z, b)
-                    const lift = 1 + hash3(x, z + b*5, z) * 3; 
+                    // Direction - Use wx for RNG
+                    const angle = hash3(b, y, wx) * Math.PI * 2;
+                    const len = 3 + hash3(wz, b, y) * 3; // 3-6 length
+                    const lift = 1 + hash3(wx, wz, b) * 3; // 1-4 upward
                     
                     const bx = x + Math.cos(angle) * len;
                     const bz = z + Math.sin(angle) * len;
@@ -210,7 +219,7 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
              placeLeafBlob(x, y+height+1, z, 1.5, leafType, 0.9);
              
              for (let i = canopyStart; i <= height; i += 2) {
-                 const r = 1.8 + hash3(x, i, z) * 0.8;
+                 const r = 1.8 + hash3(wx, i, wz) * 0.8;
                  placeLeafBlob(x, y+i, z, r, leafType, 0.75);
              }
         }
@@ -222,7 +231,7 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
             placeLogLine(x, y, z, x, y+height-1, z, logType);
 
             // Layers
-            let maxR = 3.5 + hash3(x,y,z);
+            let maxR = 3.5 + hash3(wx,y,wz);
             const startLeaf = 3;
             
             for (let ly = startLeaf; ly < height; ly++) {
@@ -247,18 +256,15 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
              const forkH = Math.max(2, Math.floor(height * 0.6));
              placeLogLine(x, y, z, x, y+forkH, z, logType);
              
-             // UPDATED: hash3(x, y+z, z) instead of hash3(x,z,y)
-             const numBranches = 2 + (hash3(x, y + z, z) > 0.5 ? 1 : 0);
+             const numBranches = 2 + (hash3(wx,wz,y) > 0.5 ? 1 : 0);
              
              for(let i=0; i<numBranches; i++) {
                  // Angle spread
-                 const ang = (Math.PI * 2 * i) / numBranches + hash3(x,i,z);
-                 // UPDATED: hash3(x, i + y, z + 2) instead of hash3(z,i,y)
-                 const len = 2 + hash3(x, i + y, z + 2) * 3;
+                 const ang = (Math.PI * 2 * i) / numBranches + hash3(wx,i,wz);
+                 const len = 2 + hash3(wz,i,y) * 3;
                  const bx = x + Math.cos(ang) * len;
                  const bz = z + Math.sin(ang) * len;
-                 // UPDATED: hash3(x, z + i, z) instead of hash3(x,z,i)
-                 const by = y + height + (hash3(x, z + i, z) * 2 - 1);
+                 const by = y + height + (hash3(wx,wz,i) * 2 - 1);
                  
                  placeLogLine(x, y+forkH, z, Math.floor(bx), Math.floor(by), Math.floor(bz), logType);
                  placeLeafLayer(Math.floor(bx), Math.floor(by), Math.floor(bz), 2.5, leafType);
@@ -281,11 +287,9 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
             
             // Occasional side bushes / vines
             for(let i=5; i<height-6; i+=4) {
-                if (hash3(x,i,z) > 0.3) {
-                    // UPDATED: hash3(x, i, z + 13) instead of hash3(z,i,x)
-                    const dir = hash3(x, i, z + 13) * Math.PI * 2;
-                    // UPDATED: hash3(x, z + i, z) instead of hash3(x,z,i)
-                    const len = 2 + hash3(x, z + i, z) * 3;
+                if (hash3(wx,i,wz) > 0.3) {
+                    const dir = hash3(wz,i,wx) * Math.PI * 2;
+                    const len = 2 + hash3(wx,wz,i) * 3;
                     const bx = x + Math.cos(dir) * len;
                     const bz = z + Math.sin(dir) * len;
                     
@@ -385,8 +389,7 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
     }
 
     // 2. DECORATION PASS (Trees, Flowers, Ores)
-    // UPDATED: Increased TREE_MARGIN to 12.
-    const TREE_MARGIN = 12; 
+    const TREE_MARGIN = 6; 
     for (let x = -TREE_MARGIN; x < CHUNK_SIZE + TREE_MARGIN; x++) {
         for (let z = -TREE_MARGIN; z < CHUNK_SIZE + TREE_MARGIN; z++) {
             const wx = worldX + x;
@@ -520,38 +523,42 @@ export function computeChunk(ctx: GenerationContext, cx: number, cz: number) {
     };
 }
 
-export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, neighbors: any) {
+export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, neighbors: { nx?: Uint8Array, px?: Uint8Array, nz?: Uint8Array, pz?: Uint8Array }) {
     const { 
         CHUNK_SIZE, WORLD_HEIGHT, BLOCK_DEFINITIONS, TEXTURE_ATLAS_SIZE, ROTATABLE_SIDES_LIST, AO_INTENSITY, BLOCKS 
     } = ctx;
 
-    const LEAF_IDS = new Set<number>([
+    const LEAF_IDS = new Set([
         BLOCKS.OAK_LEAVES, 
         BLOCKS.BIRCH_LEAVES, 
         BLOCKS.SPRUCE_LEAVES, 
-        BLOCKS.ACACIA_LEAVES,
+        BLOCKS.ACACIA_LEAVES, 
         BLOCKS.JUNGLE_LEAVES
     ]);
 
     const ROTATABLE_SIDES = new Set(ROTATABLE_SIDES_LIST);
 
-    const opaque = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[], colors: [] as number[] };
+    interface MeshBuffers {
+        positions: number[];
+        normals: number[];
+        uvs: number[];
+        indices: number[];
+        colors: number[];
+    }
+    
+    const opaque: MeshBuffers = { positions: [], normals: [], uvs: [], indices: [], colors: [] };
     let opaqueCount = 0;
-    
-    const foliage = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[], colors: [] as number[] };
+    const foliage: MeshBuffers = { positions: [], normals: [], uvs: [], indices: [], colors: [] };
     let foliageCount = 0;
-    
-    const water = { positions: [] as number[], normals: [] as number[], uvs: [] as number[], indices: [] as number[], colors: [] as number[] };
+    const water: MeshBuffers = { positions: [], normals: [], uvs: [], indices: [], colors: [] };
     let waterCount = 0;
 
     const uW = 1 / TEXTURE_ATLAS_SIZE;
     const vH = 1.0;
-
     const { nx, px, nz, pz } = neighbors;
 
-    // Helper to get block from local or neighbor data
     const getBlock = (cx: number, cy: number, cz: number) => {
-        if (cy < 0 || cy >= WORLD_HEIGHT) return 0; // AIR
+        if (cy < 0 || cy >= WORLD_HEIGHT) return 0; 
         if (cx >= 0 && cx < CHUNK_SIZE && cz >= 0 && cz < CHUNK_SIZE) {
             return chunkData[(cx * WORLD_HEIGHT + cy) * CHUNK_SIZE + cz];
         }
@@ -589,7 +596,7 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
             return (s1 ? 1 : 0) + (s2 ? 1 : 0) + (c ? 1 : 0);
         };
 
-        if (ny > 0) { // TOP
+        if (ny > 0) { 
             const nN = isSolidForAO(px, py, pz-1); 
             const nS = isSolidForAO(px, py, pz+1); 
             const nW = isSolidForAO(px-1, py, pz); 
@@ -598,13 +605,12 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
             const nNE = isSolidForAO(px+1, py, pz-1);
             const nSW = isSolidForAO(px-1, py, pz+1);
             const nSE = isSolidForAO(px+1, py, pz+1);
-
             aoValues[0] = vertexAO(nW, nS, nSW);
             aoValues[1] = vertexAO(nE, nS, nSE);
             aoValues[2] = vertexAO(nW, nN, nNW);
             aoValues[3] = vertexAO(nE, nN, nNE);
         } 
-        else if (nz > 0) { // FRONT
+        else if (nz > 0) { 
            const nU = isSolidForAO(px, py+1, pz);
            const nD = isSolidForAO(px, py-1, pz);
            const nL = isSolidForAO(px-1, py, pz);
@@ -613,7 +619,6 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
            const nRU = isSolidForAO(px+1, py+1, pz);
            const nLD = isSolidForAO(px-1, py-1, pz);
            const nRD = isSolidForAO(px+1, py-1, pz);
-
            aoValues[0] = vertexAO(nL, nU, nLU); 
            aoValues[1] = vertexAO(nR, nU, nRU); 
            aoValues[2] = vertexAO(nL, nD, nLD); 
@@ -630,15 +635,7 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
         return aoValues.map(idx => AO_INTENSITY[idx]);
     };
 
-    const addQuad = (
-        targetType: 'opaque' | 'foliage' | 'water',
-        pos: number[], 
-        corners: number[][], 
-        norm: number[], 
-        uStart: number, vStart: number,
-        calcAo: boolean = true,
-        rotation: number = 0 // 0 to 3
-    ) => {
+    const addQuad = (targetType: 'opaque' | 'water' | 'foliage', pos: number[], corners: number[][], norm: number[], uStart: number, vStart: number, calcAo: boolean = true, rotation: number = 0) => {
         const target = targetType === 'opaque' ? opaque : (targetType === 'water' ? water : foliage);
         const baseIndex = targetType === 'opaque' ? opaqueCount : (targetType === 'water' ? waterCount : foliageCount);
         
@@ -651,13 +648,11 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
             const x = pos[0] + corners[i][0];
             const y = pos[1] + corners[i][1];
             const z = pos[2] + corners[i][2];
-
             target.positions.push(x, y, z);
             target.normals.push(norm[0], norm[1], norm[2]);
-            
             if (targetType !== 'water') {
                 const brightness = aos[i];
-                target.colors!.push(brightness, brightness, brightness);
+                target.colors.push(brightness, brightness, brightness);
             }
         }
 
@@ -666,12 +661,7 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
         const v0 = vStart;
         const v1 = vStart + vH;
         
-        const perms = [
-            [0, 1, 2, 3], // 0 deg
-            [2, 0, 3, 1], // 90 deg
-            [3, 2, 1, 0], // 180 deg
-            [1, 3, 0, 2]  // 270 deg
-        ];
+        const perms = [[0, 1, 2, 3], [2, 0, 3, 1], [3, 2, 1, 0], [1, 3, 0, 2]];
         const p = perms[rotation % 4];
         const uvSet = [u0, v0, u1, v0, u0, v1, u1, v1];
 
@@ -681,50 +671,37 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
             uvSet[p[2]*2], uvSet[p[2]*2+1], 
             uvSet[p[3]*2], uvSet[p[3]*2+1]
         );
-
         target.indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex + 1, baseIndex + 3, baseIndex + 2);
-        
         if (targetType === 'opaque') opaqueCount += 4;
         else if (targetType === 'water') waterCount += 4;
         else foliageCount += 4;
     };
     
-    // Modified addCross with Scale parameter for bushy leaves
     const addCross = (x: number, y: number, z: number, uStart: number, vStart: number, scale: number = 1.0) => {
         const u0 = uStart + 0.001;
         const u1 = uStart + uW - 0.001;
         const v0 = vStart;
         const v1 = vStart + vH;
         const ao = 1.0; 
-
-        // Calculate offsets based on scale (centered at +0.5)
         const offset = (scale - 1.0) / 2;
         const min = -offset;
         const max = 1 + offset;
 
-        // Plane 1 (Diagonal A)
         foliage.positions.push(
-            x + min, y + min, z + min, 
-            x + max, y + min, z + max, 
-            x + min, y + max, z + min, 
-            x + max, y + max, z + max
+            x + min, y + min, z + min, x + max, y + min, z + max, x + min, y + max, z + min, x + max, y + max, z + max
         );
         foliage.normals.push(0.7,0,0.7, 0.7,0,0.7, 0.7,0,0.7, 0.7,0,0.7);
         foliage.uvs.push(u0, v0, u1, v0, u0, v1, u1, v1);
-        foliage.colors!.push(ao,ao,ao, ao,ao,ao, ao,ao,ao, ao,ao,ao);
+        foliage.colors.push(ao,ao,ao, ao,ao,ao, ao,ao,ao, ao,ao,ao);
         foliage.indices.push(foliageCount, foliageCount+1, foliageCount+2, foliageCount+1, foliageCount+3, foliageCount+2);
         foliageCount += 4;
 
-        // Plane 2 (Diagonal B)
         foliage.positions.push(
-            x + min, y + min, z + max, 
-            x + max, y + min, z + min, 
-            x + min, y + max, z + max, 
-            x + max, y + max, z + min
+            x + min, y + min, z + max, x + max, y + min, z + min, x + min, y + max, z + max, x + max, y + max, z + min
         );
         foliage.normals.push(-0.7,0,0.7, -0.7,0,0.7, -0.7,0,0.7, -0.7,0,0.7);
         foliage.uvs.push(u0, v0, u1, v0, u0, v1, u1, v1);
-        foliage.colors!.push(ao,ao,ao, ao,ao,ao, ao,ao,ao, ao,ao,ao);
+        foliage.colors.push(ao,ao,ao, ao,ao,ao, ao,ao,ao, ao,ao,ao);
         foliage.indices.push(foliageCount, foliageCount+1, foliageCount+2, foliageCount+1, foliageCount+3, foliageCount+2);
         foliageCount += 4;
     };
@@ -733,30 +710,30 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
         for (let y = 0; y < WORLD_HEIGHT; y++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 const type = chunkData[(x * WORLD_HEIGHT + y) * CHUNK_SIZE + z];
-                if (type === 0) continue; // AIR
+                if (type === 0) continue; 
                 
                 const typeDef = getBlockDef(type);
-                const isSeagrass = type === 34; 
+                const isSeagrass = type === BLOCKS.SEAGRASS; 
                 
-                // 1. Render Sprites (Flowers, Grass)
+                if (LEAF_IDS.has(type)) {
+                    const [u, v] = getUVOffset(type, [1, 0, 0]); 
+                    addCross(x, y, z, u, v, 1.3);
+                }
                 if (typeDef.isSprite) {
                     const [u, v] = getUVOffset(type, [0, 1, 0]);
                     addCross(x, y, z, u, v, 1.0);
                     if (!isSeagrass) continue;
                 }
 
-                // 2. Volume Rendering (Cubes)
-                const isBlockWater = type === 6 || isSeagrass; 
-                const volumeType = isBlockWater ? 6 : type;
+                const isBlockWater = type === BLOCKS.WATER || isSeagrass; 
+                const volumeType = isBlockWater ? BLOCKS.WATER : type;
                 const isBlockFoliage = typeDef.isTransparent && !isBlockWater && !isSeagrass;
-                const targetType = isBlockWater ? 'water' : (isBlockFoliage ? 'foliage' : 'opaque');
+                const targetType: 'opaque' | 'water' | 'foliage' = isBlockWater ? 'water' : (isBlockFoliage ? 'foliage' : 'opaque');
 
                 const isFaceVisible = (dx: number, dy: number, dz: number) => {
                     const t = getBlock(x + dx, y + dy, z + dz);
                     const tDef = getBlockDef(t);
-                    
-                    const tIsWater = t === 6 || t === 34; 
-
+                    const tIsWater = t === BLOCKS.WATER || t === BLOCKS.SEAGRASS; 
                     if (t === 0) return true;
                     if (isBlockWater) {
                          if (tIsWater) return false;
@@ -774,7 +751,6 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
                 const [uTop, vTop] = getUVOffset(volumeType, [0, 1, 0]);
                 const [uBot, vBot] = getUVOffset(volumeType, [0, -1, 0]);
                 const [uSide, vSide] = getUVOffset(volumeType, [1, 0, 0]);
-
                 const rotTop = (x * 13 ^ z * 23) & 3;
                 const rotSide = (x * 17 ^ y * 29 ^ z * 7) & 3;
                 const canRotateSide = ROTATABLE_SIDES.has(volumeType);
@@ -785,7 +761,6 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
                     addQuad(targetType, [x, y, z], [[0, wh, 1], [1, wh, 1], [0, wh, 0], [1, wh, 0]], [0, 1, 0], uTop, vTop, true, rotTop);
                 }
                 if (isFaceVisible(0, -1, 0)) addQuad(targetType, [x, y, z], [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1]], [0, -1, 0], uBot, vBot, true, rotTop);
-                
                 if (isFaceVisible(0, 0, 1)) addQuad(targetType, [x, y, z], [[0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1]], [0, 0, 1], uSide, vSide, true, effectiveSideRot);
                 if (isFaceVisible(0, 0, -1)) addQuad(targetType, [x, y, z], [[1, 0, 0], [0, 0, 0], [1, 1, 0], [0, 1, 0]], [0, 0, -1], uSide, vSide, true, effectiveSideRot);
                 if (isFaceVisible(1, 0, 0)) addQuad(targetType, [x, y, z], [[1, 0, 1], [1, 0, 0], [1, 1, 1], [1, 1, 0]], [1, 0, 0], uSide, vSide, true, effectiveSideRot);
@@ -794,8 +769,7 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
         }
     }
     
-    // Convert standard arrays to TypedArrays for Transferable support
-    const toBuffers = (obj: any) => {
+    const toBuffers = (obj: MeshBuffers) => {
         return {
             positions: new Float32Array(obj.positions),
             normals: new Float32Array(obj.normals),

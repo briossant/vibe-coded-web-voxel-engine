@@ -246,10 +246,7 @@ function computeChunk(ctx, cx, cz) {
     const biomeCounts = {};
 
     const getIndex = (x, y, z) => (x * WORLD_HEIGHT + y) * CHUNK_SIZE + z;
-    
-    // UPDATED: hash3 now uses World Coordinates to ensure trees are generated identically across chunk boundaries.
-    // x, y, z here are treated as offsets from the chunk origin + local tree coordinates.
-    const hash3 = (x, y, z) => hash((worldX + x) + y * 31, (worldZ + z), SEED);
+    const hash3 = (x, y, z) => hash(x + y * 31, z, SEED);
 
     function safeSetBlock(x, y, z, block) {
         if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE && y >= 0 && y < WORLD_HEIGHT) {
@@ -296,7 +293,9 @@ function computeChunk(ctx, cx, cz) {
                 for (let z = -ir; z <= ir; z++) {
                     const dSq = x*x + y*y + z*z;
                     if (dSq <= rSq) {
-                        if (dSq >= rSq - 2 && hash3(cx+x, cy+y, cz+z) > density) continue;
+                        const wx = worldX + cx + x;
+                        const wz = worldZ + cz + z;
+                        if (dSq >= rSq - 2 && hash3(wx, cy+y, wz) > density) continue;
                         safeSetBlock(cx+x, cy+y, cz+z, block);
                     }
                 }
@@ -318,7 +317,10 @@ function computeChunk(ctx, cx, cz) {
     }
 
     function placeTree(x, y, z, typeStr) {
-        const rVal = hash3(x, y, z);
+        const wx = worldX + x;
+        const wz = worldZ + z;
+
+        const rVal = hash3(wx, y, wz);
         
         let logType = BLOCKS.OAK_LOG;
         let leafType = BLOCKS.OAK_LEAVES;
@@ -339,21 +341,17 @@ function computeChunk(ctx, cx, cz) {
                 const height = 7 + Math.floor(rVal * 6); 
                 placeLogLine(x, y, z, x, y+height-2, z, logType);
                 
-                if (hash3(x, y, z+1) > 0.4) safeSetBlock(x+1, y, z, logType);
-                if (hash3(x, y, z-1) > 0.4) safeSetBlock(x-1, y, z, logType);
-                if (hash3(x+1, y, z) > 0.4) safeSetBlock(x, y, z+1, logType);
-                if (hash3(x-1, y, z) > 0.4) safeSetBlock(x, y, z-1, logType);
+                if (hash3(wx, y, wz+1) > 0.4) safeSetBlock(x+1, y, z, logType);
+                if (hash3(wx, y, wz-1) > 0.4) safeSetBlock(x-1, y, z, logType);
+                if (hash3(wx+1, y, wz) > 0.4) safeSetBlock(x, y, z+1, logType);
+                if (hash3(wx-1, y, wz) > 0.4) safeSetBlock(x, y, z-1, logType);
 
-                const numBranches = 3 + Math.floor(hash3(x, height, z) * 3); 
+                const numBranches = 3 + Math.floor(hash3(wx, height, wz) * 3); 
                 for (let b = 0; b < numBranches; b++) {
-                    const startH = Math.floor(height * 0.4) + Math.floor(hash3(x, b, z) * (height * 0.4));
-                    // UPDATED: Avoid swapping args in hash3 which breaks coordinate consistency.
-                    // Instead of hash3(b, y, x), use offsets: hash3(x, y + b*7, z).
-                    const angle = hash3(x, y + b*7, z) * Math.PI * 2;
-                    // UPDATED: hash3(x, b, z + 50) instead of hash3(z, b, y)
-                    const len = 3 + hash3(x, b, z + 50) * 3; 
-                    // UPDATED: hash3(x, z, z) instead of hash3(x, z, b) - z in y slot
-                    const lift = 1 + hash3(x, z + b*5, z) * 3; 
+                    const startH = Math.floor(height * 0.4) + Math.floor(hash3(wx, b, wz) * (height * 0.4));
+                    const angle = hash3(b, y, wx) * Math.PI * 2;
+                    const len = 3 + hash3(wz, b, y) * 3; 
+                    const lift = 1 + hash3(wx, wz, b) * 3; 
                     const bx = x + Math.cos(angle) * len;
                     const bz = z + Math.sin(angle) * len;
                     const by = y + startH + lift;
@@ -376,14 +374,14 @@ function computeChunk(ctx, cx, cz) {
              const canopyStart = Math.floor(height * 0.5);
              placeLeafBlob(x, y+height+1, z, 1.5, leafType, 0.9);
              for (let i = canopyStart; i <= height; i += 2) {
-                 const r = 1.8 + hash3(x, i, z) * 0.8;
+                 const r = 1.8 + hash3(wx, i, wz) * 0.8;
                  placeLeafBlob(x, y+i, z, r, leafType, 0.75);
              }
         }
         else if (typeStr === 'SPRUCE') {
             const height = 10 + Math.floor(rVal * 14); 
             placeLogLine(x, y, z, x, y+height-1, z, logType);
-            let maxR = 3.5 + hash3(x,y,z);
+            let maxR = 3.5 + hash3(wx,y,wz);
             const startLeaf = 3;
             for (let ly = startLeaf; ly < height; ly++) {
                 const nh = (ly - startLeaf) / (height - startLeaf);
@@ -400,17 +398,13 @@ function computeChunk(ctx, cx, cz) {
              const height = 5 + Math.floor(rVal * 4);
              const forkH = Math.max(2, Math.floor(height * 0.6));
              placeLogLine(x, y, z, x, y+forkH, z, logType);
-             // UPDATED: hash3(x, y + z, z) instead of hash3(x,z,y)
-             const numBranches = 2 + (hash3(x, y + z, z) > 0.5 ? 1 : 0);
+             const numBranches = 2 + (hash3(wx,wz,y) > 0.5 ? 1 : 0);
              for(let i=0; i<numBranches; i++) {
-                 // UPDATED: hash3(x, i, z) is OK.
-                 const ang = (Math.PI * 2 * i) / numBranches + hash3(x,i,z);
-                 // UPDATED: hash3(x, i + y, z + 2) instead of hash3(z,i,y)
-                 const len = 2 + hash3(x, i + y, z + 2) * 3;
+                 const ang = (Math.PI * 2 * i) / numBranches + hash3(wx,i,wz);
+                 const len = 2 + hash3(wz,i,y) * 3;
                  const bx = x + Math.cos(ang) * len;
                  const bz = z + Math.sin(ang) * len;
-                 // UPDATED: hash3(x, z + i, z) instead of hash3(x,z,i)
-                 const by = y + height + (hash3(x, z + i, z) * 2 - 1);
+                 const by = y + height + (hash3(wx,wz,i) * 2 - 1);
                  placeLogLine(x, y+forkH, z, Math.floor(bx), Math.floor(by), Math.floor(bz), logType);
                  placeLeafLayer(Math.floor(bx), Math.floor(by), Math.floor(bz), 2.5, leafType);
              }
@@ -425,11 +419,9 @@ function computeChunk(ctx, cx, cz) {
             }
             placeLeafBlob(x, y+height, z, 6.5, leafType, 0.7);
             for(let i=5; i<height-6; i+=4) {
-                if (hash3(x,i,z) > 0.3) {
-                    // UPDATED: hash3(x, i, z + 13) instead of hash3(z,i,x)
-                    const dir = hash3(x, i, z + 13) * Math.PI * 2;
-                    // UPDATED: hash3(x, z + i, z) instead of hash3(x,z,i)
-                    const len = 2 + hash3(x, z + i, z) * 3;
+                if (hash3(wx,i,wz) > 0.3) {
+                    const dir = hash3(wz,i,wx) * Math.PI * 2;
+                    const len = 2 + hash3(wx,wz,i) * 3;
                     const bx = x + Math.cos(dir) * len;
                     const bz = z + Math.sin(dir) * len;
                     placeLogLine(x, y+i, z, Math.floor(bx), y+i+1, Math.floor(bz), logType);
@@ -521,9 +513,7 @@ function computeChunk(ctx, cx, cz) {
         }
     }
 
-    // UPDATED: Increased TREE_MARGIN to 12 to ensure trees from neighboring chunks (especially Jungle)
-    // are generated correctly even if they spill into this chunk.
-    const TREE_MARGIN = 12; 
+    const TREE_MARGIN = 6; 
     for (let x = -TREE_MARGIN; x < CHUNK_SIZE + TREE_MARGIN; x++) {
         for (let z = -TREE_MARGIN; z < CHUNK_SIZE + TREE_MARGIN; z++) {
             const wx = worldX + x;
@@ -835,6 +825,10 @@ function computeChunkMesh(ctx, chunkData, neighbors) {
                 const typeDef = getBlockDef(type);
                 const isSeagrass = type === 34; 
                 
+                if (LEAF_IDS.has(type)) {
+                    const [u, v] = getUVOffset(type, [1, 0, 0]); 
+                    addCross(x, y, z, u, v, 1.3);
+                }
                 if (typeDef.isSprite) {
                     const [u, v] = getUVOffset(type, [0, 1, 0]);
                     addCross(x, y, z, u, v, 1.0);

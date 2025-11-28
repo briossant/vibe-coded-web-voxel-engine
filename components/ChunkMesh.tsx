@@ -145,8 +145,8 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors, chunk
             <meshStandardMaterial 
                 map={globalTexture} 
                 vertexColors
-                alphaTest={0.5}
-                transparent={false}
+                alphaTest={0.3}
+                transparent={true}
                 side={THREE.DoubleSide}
                 roughness={0.8}
             />
