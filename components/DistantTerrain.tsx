@@ -237,9 +237,13 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
                         isWater: boolean = false
                     ) => {
                         const overlap = isWater ? 0.0 : 0.05;
+                        
+                        // Fix for water gap: ChunkMesh renders water at 0.8 height (0.2 below top).
+                        // We must match that visual height for distant terrain to prevent gaps.
+                        const renderHeight = isWater ? Math.max(0.01, height - 0.2) : height;
 
                         _position.set(wx + step / 2, startY, wz + step / 2);
-                        _scale.set(step + overlap, height, step + overlap);
+                        _scale.set(step + overlap, renderHeight, step + overlap);
                         _matrix.compose(_position, _quaternion, _scale);
                         
                         mesh.setMatrixAt(i, _matrix);
@@ -262,7 +266,7 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
                         }
 
                         // Height Tinting (Atmospheric)
-                        const topH = startY + height;
+                        const topH = startY + renderHeight; // Use renderHeight for accurate tinting
                         const heightShade = 0.8 + (topH / 384) * 0.2; 
                         _topColor.multiplyScalar(heightShade);
                         _sideColor.multiplyScalar(heightShade);

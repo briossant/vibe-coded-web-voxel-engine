@@ -1,4 +1,5 @@
 
+
 import { BlockType } from '../blocks.js';
 
 // We define the context that will be passed to the worker function.
@@ -528,7 +529,7 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
         CHUNK_SIZE, WORLD_HEIGHT, BLOCK_DEFINITIONS, TEXTURE_ATLAS_SIZE, ROTATABLE_SIDES_LIST, AO_INTENSITY, BLOCKS 
     } = ctx;
 
-    const LEAF_IDS = new Set([
+    const LEAF_IDS = new Set<number>([
         BLOCKS.OAK_LEAVES, 
         BLOCKS.BIRCH_LEAVES, 
         BLOCKS.SPRUCE_LEAVES, 
