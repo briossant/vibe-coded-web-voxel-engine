@@ -251,8 +251,9 @@ const createAtlas = () => {
   fill(44, '#9FA8DA', 0.15);
 
   const tex = new THREE.CanvasTexture(canvas);
-  // Use LinearMipmapLinearFilter (Trilinear) to smooth out distant noise
-  tex.minFilter = THREE.LinearMipmapLinearFilter; 
+  // Use NearestMipmapLinearFilter to avoid texture bleeding artifacts (multicolor outlines) 
+  // while maintaining mipmap support for performance/visual stability at distance
+  tex.minFilter = THREE.NearestMipmapLinearFilter; 
   tex.magFilter = THREE.NearestFilter;
   tex.generateMipmaps = true;
   tex.colorSpace = THREE.SRGBColorSpace;

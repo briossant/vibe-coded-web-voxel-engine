@@ -93,6 +93,17 @@ const ChunkMesh: React.FC<ChunkMeshProps> = ({ chunk, lodLevel, neighbors, chunk
       }
   });
 
+  // Cleanup geometry memory on unmount or update
+  useEffect(() => {
+    return () => {
+      if (geometryData) {
+        geometryData.opaque.dispose();
+        geometryData.foliage.dispose();
+        geometryData.water.dispose();
+      }
+    };
+  }, [geometryData]);
+
   useEffect(() => {
       let isMounted = true;
       
