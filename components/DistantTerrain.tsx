@@ -1,5 +1,6 @@
 
 import React, { useEffect, useRef, useMemo } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { ChunkData, Vector3 } from '../types';
 import { CHUNK_SIZE, WORLD_HEIGHT } from '../constants';
@@ -139,13 +140,23 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
     return { opaqueGeometry: opGeo, waterGeometry: waGeo, opaqueMaterial: opMat, waterMaterial: waMat };
   }, []);
 
-  useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout>;
+  // Frame-Throttled Updates State
+  const lastUpdateRef = useRef(0);
+  const needsUpdateRef = useRef(true);
+  const latestProps = useRef({ chunks, playerPosition, renderDistance });
 
-    const updateGeometry = () => {
+  // Sync props to ref for useFrame loop
+  useEffect(() => {
+      latestProps.current = { chunks, playerPosition, renderDistance };
+      needsUpdateRef.current = true;
+  }, [chunks, playerPosition, renderDistance]);
+
+  const updateGeometry = () => {
         const opaqueMesh = opaqueMeshRef.current;
         const waterMesh = waterMeshRef.current;
         if (!opaqueMesh || !waterMesh) return;
+        
+        const { chunks, playerPosition, renderDistance } = latestProps.current;
 
         // Initialize custom attributes
         const initAttrs = (mesh: THREE.InstancedMesh) => {
@@ -345,17 +356,17 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
         waAttrs.height.needsUpdate = true;
         waAttrs.cap.needsUpdate = true;
         waterMaterial.needsUpdate = true;
-    };
+  };
 
-    // DEBOUNCE LOGIC
-    // We delay the update by 200ms. If another chunk update comes in (changing props), 
-    // the previous timer is cleared and restarted. This prevents running the heavy loop above
-    // 50 times a second during initial load.
-    timeoutId = setTimeout(updateGeometry, 200);
-
-    return () => clearTimeout(timeoutId);
-
-  }, [chunks, playerPosition, renderDistance, maxCount, opaqueGeometry, waterGeometry, opaqueMaterial, waterMaterial]);
+  useFrame(({ clock }) => {
+      const time = clock.getElapsedTime();
+      // Throttle updates to 10Hz (0.1s)
+      if (needsUpdateRef.current && (time - lastUpdateRef.current > 0.1)) {
+          updateGeometry();
+          lastUpdateRef.current = time;
+          needsUpdateRef.current = false;
+      }
+  });
 
   return (
     <group>

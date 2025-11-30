@@ -120,7 +120,7 @@ const registerAll = () => {
     reg(column(BlockType.JUNGLE_LOG, 'Jungle Log', 'Wood', 36, 34, '#372B18'));
     reg(simple(BlockType.JUNGLE_LEAVES, 'Jungle Leaves', 'Wood', 35, '#124910', { isTransparent: true }));
     
-    reg(simple(BlockType.RED_SAND, 'Red Sand', 'Nature', 37, '#963D13'));
+    reg(simple(BlockType.RED_SAND, 'Red Sand', 'Nature', 37, '#c63D13'));
     reg(createBlock(BlockType.RED_SANDSTONE, 'Red Sandstone', 'Building', 38, 38, 38, '#842E06'));
     
     reg(createBlock(BlockType.MELON, 'Melon', 'Nature', 40, 39, 40, '#507F22'));
