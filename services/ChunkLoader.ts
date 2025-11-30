@@ -107,7 +107,8 @@ function lerp(a, b, t) {
 
 const BIOMES = {
     OCEAN: 0, BEACH: 1, PLAINS: 2, FOREST: 3, DESERT: 4, 
-    SNOWY: 5, MOUNTAIN: 6, JUNGLE: 7, SAVANNA: 8, MESA: 9, RIVER: 10
+    SNOWY: 5, MOUNTAIN: 6, JUNGLE: 7, SAVANNA: 8, MESA: 9, RIVER: 10,
+    BIRCH_FOREST: 11
 };
 
 // --- TERRAIN GENERATION (from TerrainMath.ts) ---
@@ -209,7 +210,10 @@ function getTerrainInfo(wx, wz, noiseInstance, waterLevel, worldHeight) {
                 else if (humidity > -0.6) biome = BIOMES.MESA;
                 else biome = BIOMES.DESERT;
             } else if (temperature > -0.3) {
-                if (humidity > 0.2) biome = BIOMES.FOREST;
+                if (humidity > 0.2) {
+                    if (temperature < 0.15) biome = BIOMES.BIRCH_FOREST;
+                    else biome = BIOMES.FOREST;
+                }
                 else if (humidity > -0.4) biome = BIOMES.PLAINS;
                 else biome = BIOMES.SAVANNA;
             } else {
@@ -406,7 +410,9 @@ function computeChunk(ctx, cx, cz) {
                  const bz = z + Math.sin(ang) * len;
                  const by = y + height + (hash3(wx,wz,i) * 2 - 1);
                  placeLogLine(x, y+forkH, z, Math.floor(bx), Math.floor(by), Math.floor(bz), logType);
+                 // Double layer for better visibility
                  placeLeafLayer(Math.floor(bx), Math.floor(by), Math.floor(bz), 2.5, leafType);
+                 placeLeafLayer(Math.floor(bx), Math.floor(by)+1, Math.floor(bz), 1.5, leafType);
              }
         }
         else if (typeStr === 'JUNGLE') {
@@ -462,6 +468,7 @@ function computeChunk(ctx, cx, cz) {
                             case BIOMES.SNOWY: block = BLOCKS.SNOW; break;
                             case BIOMES.MOUNTAIN: block = BLOCKS.STONE; break; 
                             case BIOMES.FOREST: block = BLOCKS.GRASS; break;
+                            case BIOMES.BIRCH_FOREST: block = BLOCKS.GRASS; break;
                             case BIOMES.JUNGLE: block = BLOCKS.GRASS; break;
                             case BIOMES.SAVANNA: block = BLOCKS.DIRT; break; 
                             case BIOMES.MESA: block = BLOCKS.RED_SAND; break;
@@ -548,10 +555,15 @@ function computeChunk(ctx, cx, cz) {
 
             if (h < 210) {
                 if (biome === BIOMES.FOREST) { treeChance = 0.06; treeType = 'OAK'; if (r > 0.7) treeType = 'BIRCH'; }
-                else if (biome === BIOMES.PLAINS) { treeChance = 0.002; treeType = 'OAK'; }
+                else if (biome === BIOMES.BIRCH_FOREST) { treeChance = 0.06; treeType = 'BIRCH'; }
+                else if (biome === BIOMES.PLAINS) { 
+                    treeChance = 0.002; 
+                    treeType = 'OAK'; 
+                    if (r > 0.9) treeType = 'BIRCH';
+                }
                 else if (biome === BIOMES.SNOWY) { treeChance = 0.02; treeType = 'SPRUCE'; }
                 else if (biome === BIOMES.MOUNTAIN) { treeChance = 0.005; treeType = 'SPRUCE'; }
-                else if (biome === BIOMES.JUNGLE) { treeChance = 0.12; treeType = 'JUNGLE'; }
+                else if (biome === BIOMES.JUNGLE) { treeChance = 0.025; treeType = 'JUNGLE'; } // Reduced from 0.12
                 else if (biome === BIOMES.SAVANNA) { treeChance = 0.005; treeType = 'ACACIA'; }
             }
 
@@ -576,7 +588,7 @@ function computeChunk(ctx, cx, cz) {
                      else if (r > 0.98) safeSetBlock(x, h+1, z, BLOCKS.BLUE_ORCHID);
                      else if (r > 0.7) safeSetBlock(x, h+1, z, BLOCKS.TALL_GRASS); 
                  }
-                 else if (biome === BIOMES.FOREST || biome === BIOMES.PLAINS) {
+                 else if (biome === BIOMES.FOREST || biome === BIOMES.PLAINS || biome === BIOMES.BIRCH_FOREST) {
                      if (r > 0.90) {
                          if (r > 0.98) safeSetBlock(x, h+1, z, BLOCKS.TULIP_RED);
                          else if (r > 0.96) safeSetBlock(x, h+1, z, BLOCKS.TULIP_ORANGE);
@@ -626,6 +638,7 @@ function computeChunk(ctx, cx, cz) {
     else if (biomeCounts[BIOMES.MESA] > 50) domB = 'desert'; 
     else if (biomeCounts[BIOMES.SNOWY] > 50) domB = 'mountain';
     else if (biomeCounts[BIOMES.FOREST] > 50) domB = 'forest';
+    else if (biomeCounts[BIOMES.BIRCH_FOREST] > 50) domB = 'forest';
     else if (biomeCounts[BIOMES.JUNGLE] > 50) domB = 'forest';
     else if (biomeCounts[BIOMES.MOUNTAIN] > 50) domB = 'mountain';
 

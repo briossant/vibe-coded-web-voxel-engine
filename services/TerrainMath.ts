@@ -119,7 +119,8 @@ export function lerp(a: number, b: number, t: number) {
 // Biome Constants
 export const BIOMES = {
     OCEAN: 0, BEACH: 1, PLAINS: 2, FOREST: 3, DESERT: 4, 
-    SNOWY: 5, MOUNTAIN: 6, JUNGLE: 7, SAVANNA: 8, MESA: 9, RIVER: 10
+    SNOWY: 5, MOUNTAIN: 6, JUNGLE: 7, SAVANNA: 8, MESA: 9, RIVER: 10,
+    BIRCH_FOREST: 11
 };
 
 // --- CORE GENERATION ---
@@ -261,7 +262,11 @@ export function getTerrainInfo(wx: number, wz: number, noiseInstance: SimplexNoi
                 else if (humidity > -0.6) biome = BIOMES.MESA;
                 else biome = BIOMES.DESERT;
             } else if (temperature > -0.3) {
-                if (humidity > 0.2) biome = BIOMES.FOREST;
+                // Modified Forest logic to include Birch Forest
+                if (humidity > 0.2) {
+                    if (temperature < 0.15) biome = BIOMES.BIRCH_FOREST;
+                    else biome = BIOMES.FOREST;
+                }
                 else if (humidity > -0.4) biome = BIOMES.PLAINS;
                 else biome = BIOMES.SAVANNA;
             } else {
