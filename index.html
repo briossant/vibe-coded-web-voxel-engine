@@ -1,37 +1,44 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
+
+<head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Voxel Engine</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-      html, body, #root {
-        width: 100%;
-        height: 100%;
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-        background-color: #000;
-      }
-      canvas {
-        touch-action: none;
-      }
-      .image-pixelated {
-        image-rendering: pixelated;
-        image-rendering: -moz-crisp-edges;
-        image-rendering: crisp-edges;
-      }
-      /* Position Stats panel to top-right */
-      .stats-panel {
-        top: 0px !important;
-        right: 0px !important;
-        left: auto !important;
-        position: absolute !important;
-        z-index: 10000 !important;
-      }
+        html,
+        body,
+        #root {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+        }
+
+        canvas {
+            touch-action: none;
+        }
+
+        .image-pixelated {
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+
+        /* Position Stats panel to top-right */
+        .stats-panel {
+            top: 0px !important;
+            right: 0px !important;
+            left: auto !important;
+            position: absolute !important;
+            z-index: 10000 !important;
+        }
+
     </style>
-  <script type="importmap">
+    <script type="importmap">
 {
   "imports": {
     "react": "https://aistudiocdn.com/react@^19.2.0",
@@ -44,7 +51,11 @@
 }
 </script>
 </head>
-  <body>
+
+<body>
     <div id="root"></div>
-  </body>
+    <script type="module" src="/index.tsx"></script>
+
+</body>
+
 </html>
