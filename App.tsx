@@ -1,10 +1,10 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import Game from './components/Game';
-import HUD from './components/HUD';
-import Inventory from './components/Inventory';
-import { GameState, Vector3 } from './types';
-import { BlockType } from './blocks';
-import { noise } from './utils/noise';
+import Game from '@/src/components/engine/Game';
+import HUD from '@/src/components/ui/HUD';
+import Inventory from '@/src/components/player/Inventory';
+import { GameState, Vector3 } from '@/src/types/game';
+import { BlockType } from '@/src/core/blocks';
+import { noise } from '@/src/utils/noise';
 
 const App: React.FC = () => {
   // Generate a random seed on first load

@@ -1,8 +1,8 @@
 
 import React, { useState, useMemo } from 'react';
-import { BlockType, getAllBlocks } from '../blocks';
-import { BlockDefinition, BlockCategory } from '../types';
-import { textureUrl } from '../utils/textures';
+import { BlockType, getAllBlocks } from '@/src/core/blocks';
+import { BlockDefinition, BlockCategory } from '@/src/types/blocks';
+import { textureUrl } from '@/src/utils/textures';
 
 interface InventoryProps {
   isOpen: boolean;

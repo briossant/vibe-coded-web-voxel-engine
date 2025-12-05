@@ -1,10 +1,9 @@
 
-
-import { computeChunk, computeChunkMesh } from './GenerationLogic.js';
-import * as TerrainMath from './TerrainMath.js';
-import { BlockType } from '../blocks.js';
-import { TEXTURE_ATLAS_SIZE } from '../constants.js'; 
-import { blockRegistry } from './BlockRegistry.js';
+import { computeChunk, computeChunkMesh } from '../GenerationLogic';
+import * as TerrainMath from '../TerrainMath';
+import { BlockType } from '../../core/blocks';
+import { TEXTURE_ATLAS_SIZE } from '../../constants'; 
+import { blockRegistry } from '../BlockRegistry';
 
 // Blocks that look good with random rotation on their side faces
 const ROTATABLE_SIDES = [

@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Sky, Stats, Stars } from '@react-three/drei';
-import * as THREE from 'three';
-import { Vector3, ChunkData, GameState } from '../types';
-import { BlockType } from '../blocks';
-import { getBlockFromChunk, getTerrainHeight } from '../services/TerrainGenerator';
-import ChunkMesh from './ChunkMesh';
-import DistantTerrain from './DistantTerrain';
-import Player from './Player';
-import { CHUNK_SIZE, WORLD_HEIGHT, MAX_RENDER_DISTANCE } from '../constants';
-import { ChunkLoader } from '../services/ChunkLoader';
-import { globalTexture } from '../utils/textures';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { Stats } from '@react-three/drei';
+import { Vector3, ChunkData, GameState } from '@/src/types/game';
+import { BlockType } from '@/src/core/blocks';
+import { getBlockFromChunk, getTerrainHeight } from '@/src/services/TerrainGenerator';
+import ChunkMesh from '@/src/components/world/ChunkMesh';
+import DistantTerrain from '@/src/components/world/DistantTerrain';
+import Player from '@/src/components/player/Player';
+import { Scene } from './Scene';
+import { CHUNK_SIZE, WORLD_HEIGHT, MAX_RENDER_DISTANCE } from '@/src/constants';
+import { ChunkLoader } from '@/src/services/ChunkLoader';
 
 interface GameProps {
   gameState: GameState;
@@ -22,124 +21,6 @@ interface GameSceneProps {
   gameState: GameState & { setIsUnderwater: (val: boolean) => void };
   onChunkCountChange: (count: number) => void;
 }
-
-const CloudShaderMaterial = {
-    uniforms: {
-        uTime: { value: 0 },
-        uColor: { value: new THREE.Color('#ffffff') },
-        uCloudScale: { value: 0.008 },
-        uCloudSpeed: { value: 0.02 },
-        uOpacity: { value: 0.8 },
-    },
-    vertexShader: `
-        varying vec2 vUv;
-        varying vec3 vWorldPos;
-        void main() {
-            vUv = uv;
-            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-            vWorldPos = worldPosition.xyz;
-            gl_Position = projectionMatrix * viewMatrix * worldPosition;
-        }
-    `,
-    fragmentShader: `
-        uniform float uTime;
-        uniform vec3 uColor;
-        uniform float uCloudScale;
-        uniform float uCloudSpeed;
-        uniform float uOpacity;
-        varying vec3 vWorldPos;
-
-        float hash(vec2 p) {
-            p = fract(p * vec2(123.34, 456.21));
-            p += dot(p, p + 45.32);
-            return fract(p.x * p.y);
-        }
-
-        float noise(vec2 p) {
-            vec2 i = floor(p);
-            vec2 f = fract(p);
-            f = f * f * (3.0 - 2.0 * f);
-            float a = hash(i + vec2(0.0, 0.0));
-            float b = hash(i + vec2(1.0, 0.0));
-            float c = hash(i + vec2(0.0, 1.0));
-            float d = hash(i + vec2(1.0, 1.0));
-            return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-        }
-
-        float fbm(vec2 p) {
-            float total = 0.0;
-            float amp = 0.5;
-            for (int i = 0; i < 5; i++) {
-                total += noise(p) * amp;
-                p *= 2.1;
-                amp *= 0.5;
-            }
-            return total;
-        }
-
-        void main() {
-            vec2 pos = vWorldPos.xz * uCloudScale;
-            pos.x += uTime * uCloudSpeed;
-            pos.y += uTime * uCloudSpeed * 0.5;
-            float n = fbm(pos);
-            float alpha = smoothstep(0.4, 0.8, n);
-            if (alpha < 0.01) discard;
-            gl_FragColor = vec4(uColor, alpha * uOpacity);
-        }
-    `
-};
-
-const CloudLayer = () => {
-    const materialRef = useRef<THREE.ShaderMaterial>(null);
-    const meshRef = useRef<THREE.Mesh>(null);
-    const materialRef2 = useRef<THREE.ShaderMaterial>(null);
-    const meshRef2 = useRef<THREE.Mesh>(null);
-
-    useFrame(({ clock, camera }) => {
-        const t = clock.getElapsedTime();
-        if (materialRef.current) materialRef.current.uniforms.uTime.value = t;
-        if (materialRef2.current) materialRef2.current.uniforms.uTime.value = t + 100;
-        if (meshRef.current) meshRef.current.position.set(camera.position.x, 280, camera.position.z);
-        if (meshRef2.current) meshRef2.current.position.set(camera.position.x, 310, camera.position.z);
-    });
-
-    const planeSize = MAX_RENDER_DISTANCE * CHUNK_SIZE * 2.5;
-
-    return (
-        <>
-            <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]}>
-                <planeGeometry args={[planeSize, planeSize]} />
-                <shaderMaterial ref={materialRef} attach="material" {...CloudShaderMaterial} transparent depthWrite={false} uniforms-uCloudScale-value={0.006} uniforms-uOpacity-value={0.8} />
-            </mesh>
-            <mesh ref={meshRef2} rotation={[-Math.PI / 2, 0, 0]}>
-                <planeGeometry args={[planeSize, planeSize]} />
-                <shaderMaterial ref={materialRef2} attach="material" {...CloudShaderMaterial} transparent depthWrite={false} uniforms-uCloudScale-value={0.003} uniforms-uOpacity-value={0.5} uniforms-uCloudSpeed-value={0.01} />
-            </mesh>
-        </>
-    );
-};
-
-const SkyBox = () => {
-    const groupRef = useRef<THREE.Group>(null);
-    useFrame(({ camera }) => {
-        if (groupRef.current) groupRef.current.position.copy(camera.position);
-    });
-    return (
-        <group ref={groupRef}>
-            <Stars radius={200} depth={50} count={5000} factor={4} fade />
-        </group>
-    );
-};
-
-const TextureManager = () => {
-    const { gl } = useThree();
-    useEffect(() => {
-        const maxAnisotropy = gl.capabilities.getMaxAnisotropy();
-        globalTexture.anisotropy = maxAnisotropy;
-        globalTexture.needsUpdate = true;
-    }, [gl]);
-    return null;
-};
 
 const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) => {
   const [playerPos, setPlayerPos] = useState<Vector3>(() => [0, getTerrainHeight(0, 0) + 10, 0]);
@@ -156,8 +37,6 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) 
   const pendingChunks = useRef<Set<string>>(new Set());
   const spiralRef = useRef({ x: 0, y: 0, dx: 0, dy: -1 });
   const chunkScanRef = useRef<{ cx: number, cz: number, index: number }>({ cx: 0, cz: 0, index: 0 });
-  const lightRef = useRef<THREE.DirectionalLight>(null);
-  const lightTarget = useMemo(() => new THREE.Object3D(), []);
 
   // Sync player pos ref for loader callback (GC)
   const playerPosRef = useRef(playerPos);
@@ -198,15 +77,6 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) 
   }, [chunkLoader]);
 
   useFrame(({ camera }) => {
-      // 1. Lighting Update
-      if (lightRef.current) {
-          const cx = camera.position.x;
-          const cz = camera.position.z;
-          lightRef.current.position.set(cx + 60, 140, cz + 40);
-          lightRef.current.target.position.set(cx, 0, cz);
-          lightRef.current.target.updateMatrixWorld();
-      }
-
       // 2. Batched State Update
       // Only trigger React reconciliation once per frame max
       if (pendingUpdateRef.current) {
@@ -332,23 +202,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) 
 
   return (
     <>
-      <TextureManager />
-      <color attach="background" args={['#87CEEB']} />
-      <Sky 
-        distance={450000} sunPosition={[100, 50, 100]} inclination={0.49} azimuth={0.25} 
-        rayleigh={isUnderwater ? 1 : 0.2} mieCoefficient={0.005} mieDirectionalG={0.7}
-      />
-      <SkyBox />
-      <fogExp2 attach="fog" args={[isUnderwater ? '#00334d' : '#B3D9FF', isUnderwater ? 0.08 : 0.0015]} />
-      <CloudLayer />
-      <hemisphereLight args={['#E3F2FD', '#3E2723', 0.7]} />
-      <ambientLight intensity={0.4} />
-      <primitive object={lightTarget} />
-      <directionalLight
-        ref={lightRef} target={lightTarget} position={[50, 100, 50]} intensity={1.2}
-        castShadow shadow-bias={-0.0001} shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-120} shadow-camera-right={120} shadow-camera-top={120} shadow-camera-bottom={-120} shadow-camera-far={350}
-      />
+      <Scene isUnderwater={isUnderwater} />
       
       {highDetailChunks.map(({ chunk, lod }) => (
         <ChunkMesh 

@@ -3,8 +3,8 @@ import React, { useRef, useEffect } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { Vector3 } from '../types';
-import { BlockType, getBlockDef } from '../blocks';
+import { Vector3 } from '@/src/types/game';
+import { BlockType, getBlockDef } from '@/src/core/blocks';
 import { 
     GRAVITY, 
     JUMP_FORCE, 
@@ -14,7 +14,7 @@ import {
     MOVE_DECELERATION, 
     AIR_CONTROL,
     AIR_DRAG
-} from '../constants';
+} from '@/src/constants';
 
 interface PlayerProps {
   position: Vector3;

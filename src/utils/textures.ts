@@ -1,7 +1,7 @@
 
 import * as THREE from 'three';
-import { getBlockDef } from '../blocks';
-import { TEXTURE_ATLAS_SIZE } from '../constants';
+import { getBlockDef } from '@/src/core/blocks';
+import { TEXTURE_ATLAS_SIZE } from '@/src/constants';
 
 const TILE_SIZE = 32;
 const S = 2; // Scale factor from original 16px designs

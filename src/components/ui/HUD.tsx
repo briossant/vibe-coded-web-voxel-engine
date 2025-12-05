@@ -1,8 +1,8 @@
 
 import React from 'react';
-import { GameState } from '../types';
-import { textureUrl } from '../utils/textures';
-import { getBlockDef } from '../blocks';
+import { GameState } from '@/src/types/game';
+import { textureUrl } from '@/src/utils/textures';
+import { getBlockDef } from '@/src/core/blocks';
 
 interface HUDProps {
   gameState: GameState & { isUnderwater: boolean };

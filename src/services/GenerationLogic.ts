@@ -1,6 +1,6 @@
 
 
-import { BlockType } from '../blocks.js';
+import { BlockType } from '@/src/core/blocks';
 
 // We define the context that will be passed to the worker function.
 // This allows TypeScript to check types while we still serialize the function for the worker.

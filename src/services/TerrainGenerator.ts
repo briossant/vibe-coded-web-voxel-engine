@@ -1,9 +1,9 @@
 
-import { ChunkData } from '../types';
-import { CHUNK_SIZE, WORLD_HEIGHT, WATER_LEVEL } from '../constants';
-import { BlockType } from '../blocks';
+import { ChunkData } from '@/src/types/world';
+import { CHUNK_SIZE, WORLD_HEIGHT, WATER_LEVEL } from '@/src/constants';
+import { BlockType } from '@/src/core/blocks';
 import { getTerrainInfo as calcTerrain, SimplexNoise } from './TerrainMath';
-import { noise } from '../utils/noise';
+import { noise } from '@/src/utils/noise';
 
 // We use the shared instance from utils/noise which is reseeded by App.tsx
 // This ensures we are synced with the Seed state.

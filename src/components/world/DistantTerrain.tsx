@@ -2,9 +2,9 @@
 import React, { useEffect, useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { ChunkData, Vector3 } from '../types';
-import { CHUNK_SIZE, WORLD_HEIGHT } from '../constants';
-import { BLOCK_DEFINITIONS, BlockType } from '../blocks';
+import { ChunkData, Vector3 } from '@/src/types/game';
+import { CHUNK_SIZE, WORLD_HEIGHT } from '@/src/constants';
+import { BLOCK_DEFINITIONS, BlockType } from '@/src/core/blocks';
 
 interface DistantTerrainProps {
   chunks: ChunkData[];
