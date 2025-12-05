@@ -69,6 +69,9 @@ const Player: React.FC<PlayerProps> = ({
   }, []);
 
   // --- Raycasting for Block Interaction (Mining/Placing) ---
+  const [targetBlockPos, setTargetBlockPos] = React.useState<{x: number, y: number, z: number} | null>(null);
+  const [targetFace, setTargetFace] = React.useState<{x: number, y: number, z: number} | null>(null);
+
   const raycast = (origin: THREE.Vector3, dir: THREE.Vector3, range: number) => {
       let x = Math.floor(origin.x);
       let y = Math.floor(origin.y);
@@ -120,17 +123,13 @@ const Player: React.FC<PlayerProps> = ({
         if (isInventoryOpen) return; // Don't place/mine if inventory is open
         if (!controlsRef.current?.isLocked) return;
         
-        const dir = new THREE.Vector3();
-        camera.getWorldDirection(dir);
-        const result = raycast(camera.position, dir, 6);
-        
-        if (result) {
+        if (targetBlockPos) {
             if (e.button === 0) { 
-                setBlock(result.x, result.y, result.z, BlockType.AIR);
-            } else if (e.button === 2) { 
-                const nx = result.x + result.face.x;
-                const ny = result.y + result.face.y;
-                const nz = result.z + result.face.z;
+                setBlock(targetBlockPos.x, targetBlockPos.y, targetBlockPos.z, BlockType.AIR);
+            } else if (e.button === 2 && targetFace) { 
+                const nx = targetBlockPos.x + targetFace.x;
+                const ny = targetBlockPos.y + targetFace.y;
+                const nz = targetBlockPos.z + targetFace.z;
                 
                 // AABB check to prevent self-placement
                 const pMinX = pos.current.x - PLAYER_WIDTH/2;
@@ -156,7 +155,7 @@ const Player: React.FC<PlayerProps> = ({
     };
     document.addEventListener('mousedown', onMouseDown);
     return () => document.removeEventListener('mousedown', onMouseDown);
-  }, [camera, getBlock, setBlock, selectedBlock, isInventoryOpen]);
+  }, [camera, getBlock, setBlock, selectedBlock, isInventoryOpen, targetBlockPos, targetFace]);
 
   // --- Input Management ---
   useEffect(() => {
@@ -218,9 +217,32 @@ const Player: React.FC<PlayerProps> = ({
   useFrame((state, delta) => {
     // Only run physics/inputs if locked (active play)
     // If inventory is open, controlsRef.current is null, so this skips.
-    if (!controlsRef.current?.isLocked) return;
+    if (!controlsRef.current?.isLocked && !isInventoryOpen) return;
     
     const dt = Math.min(delta, 0.1);
+
+    // Raycast every frame for highlighting
+    if (!isInventoryOpen) {
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        const result = raycast(camera.position, dir, 6);
+        if (result) {
+            if (!targetBlockPos || result.x !== targetBlockPos.x || result.y !== targetBlockPos.y || result.z !== targetBlockPos.z) {
+                setTargetBlockPos({ x: result.x, y: result.y, z: result.z });
+                setTargetFace(result.face);
+            }
+        } else {
+            if (targetBlockPos) {
+                setTargetBlockPos(null);
+                setTargetFace(null);
+            }
+        }
+    } else {
+        if (targetBlockPos) setTargetBlockPos(null);
+    }
+
+    // Physics skipped if inventory open (handled by return above partially, but let's ensure)
+    if (isInventoryOpen) return;
 
     // 0. Check Underwater (Head Level)
     const headX = Math.floor(camera.position.x);
@@ -408,6 +430,12 @@ const Player: React.FC<PlayerProps> = ({
   return (
       <>
         {!isInventoryOpen && <PointerLockControls ref={controlsRef} selector="#root" />}
+        {targetBlockPos && !isInventoryOpen && (
+            <mesh position={[targetBlockPos.x + 0.5, targetBlockPos.y + 0.5, targetBlockPos.z + 0.5]}>
+                <boxGeometry args={[1.005, 1.005, 1.005]} />
+                <meshBasicMaterial color="black" wireframe />
+            </mesh>
+        )}
       </>
   );
 };

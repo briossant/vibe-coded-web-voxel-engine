@@ -584,6 +584,7 @@ export function computeChunkMesh(ctx: GenerationContext, chunkData: Uint8Array, 
 
     const isSolidForAO = (bx: number, by: number, bz: number) => {
         const t = getBlock(bx, by, bz);
+        if (t === BLOCKS.SEAGRASS || t === BLOCKS.WATER) return false; // Explicitly exclude fluids/plants
         const def = getBlockDef(t);
         return def.isSolid && !def.isTransparent; 
     };

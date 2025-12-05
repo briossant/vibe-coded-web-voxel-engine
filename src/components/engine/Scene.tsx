@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Sky, Stars } from '@react-three/drei';
 import * as THREE from 'three';
+import { EffectComposer, Bloom, ToneMapping, Vignette } from '@react-three/postprocessing';
+import { ToneMappingMode } from 'postprocessing';
 import { CloudShaderMaterial } from '@/src/rendering/shaders/clouds';
 import { globalTexture } from '@/src/utils/textures';
 import { CHUNK_SIZE, MAX_RENDER_DISTANCE } from '@/src/constants';
@@ -96,6 +98,12 @@ export const Scene: React.FC<SceneProps> = ({ isUnderwater }) => {
         castShadow shadow-bias={-0.0001} shadow-mapSize={[2048, 2048]}
         shadow-camera-left={-120} shadow-camera-right={120} shadow-camera-top={120} shadow-camera-bottom={-120} shadow-camera-far={350}
       />
+      
+      <EffectComposer disableNormalPass>
+        <Bloom luminanceThreshold={0.5} luminanceSmoothing={0.9} height={300} opacity={0.5} />
+        <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
+        <Vignette eskil={false} offset={0.1} darkness={0.8} />
+      </EffectComposer>
     </>
   );
 };

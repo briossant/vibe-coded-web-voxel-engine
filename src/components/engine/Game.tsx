@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import * as THREE from 'three';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Stats } from '@react-three/drei';
 import { Vector3, ChunkData, GameState } from '@/src/types/game';
@@ -241,7 +242,7 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange }) 
 const Game: React.FC<GameProps> = ({ gameState, setIsUnderwater, onChunkCountChange }) => {
     const enhancedGameState = { ...gameState, setIsUnderwater };
     return (
-    <Canvas shadows camera={{ fov: 70, near: 0.1, far: MAX_RENDER_DISTANCE * CHUNK_SIZE }}>
+    <Canvas shadows camera={{ fov: 70, near: 0.1, far: MAX_RENDER_DISTANCE * CHUNK_SIZE }} gl={{ toneMapping: THREE.NoToneMapping }}>
       <GameScene gameState={enhancedGameState} onChunkCountChange={onChunkCountChange} />
       {gameState.debugMode && <Stats className="stats-panel" />}
     </Canvas>
