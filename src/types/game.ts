@@ -1,36 +1,23 @@
-import { Vector3 } from './common';
-import { ChunkData } from './world';
+import type { Vector3 } from './common';
+import type { ChunkData } from './world';
+
+export type { Vector3 };
+export type { ChunkData };
 
 export interface GameState {
-  // chunks: Map<string, ChunkData>; // Moved to internal Game state
-  chunkCount: number; // For HUD
-  
-  playerPosition: Vector3;
-  renderDistance: number;
-  extraRenderDistance: number; // Distance for low-res distant terrain
-  seed: number;
-  isMenuOpen: boolean;
-  debugMode: boolean;
-  
-  // Inventory & Hotbar State
-  isInventoryOpen: boolean;
-  setInventoryOpen: (isOpen: boolean) => void;
-  hotbar: number[];
-  setHotbar: (slots: number[]) => void;
-  activeHotbarSlot: number;
-  setActiveHotbarSlot: (slot: number) => void;
-  
-  selectedBlock?: number;
-  setSelectedBlock?: (blockId: number) => void;
+  chunkCount: number;
 
-  setPlayerPosition: (pos: Vector3) => void;
-  toggleMenu: () => void;
-  toggleDebug: () => void;
+  dronePosition: Vector3;
+  renderDistance: number;
+  extraRenderDistance: number;
+  seed: number;
+  debugMode: boolean;
+
+  setDronePosition: (pos: Vector3) => void;
   updateRenderDistance: (dist: number) => void;
   updateExtraRenderDistance: (dist: number) => void;
-  
-  // Accessors
+
+  // Voxel world accessors
   getChunk: (x: number, z: number) => ChunkData | undefined;
   getBlock: (x: number, y: number, z: number) => number;
-  setBlock: (x: number, y: number, z: number, type: number) => void;
 }
