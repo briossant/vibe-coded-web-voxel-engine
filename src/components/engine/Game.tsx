@@ -40,8 +40,12 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange, dr
   const spiralRef        = useRef({ x: 0, y: 0, dx: 0, dy: -1 });
   const chunkScanRef     = useRef<{ cx: number; cz: number; index: number }>({ cx: 0, cz: 0, index: 0 });
 
-  const dronePosRef = useRef(dronePos);
-  useEffect(() => { dronePosRef.current = dronePos; }, [dronePos]);
+  // Live position, mutated every frame without touching React state
+  const dronePosRef = useRef<Vector3>([...dronePos] as Vector3);
+  const droneChunkRef = useRef({
+    cx: Math.floor(dronePos[0] / CHUNK_SIZE),
+    cz: Math.floor(dronePos[2] / CHUNK_SIZE),
+  });
 
   const renderDistRef = useRef(gameState.renderDistance + gameState.extraRenderDistance);
   useEffect(() => {
@@ -144,21 +148,26 @@ const GameScene: React.FC<GameSceneProps> = ({ gameState, onChunkCountChange, dr
     return getBlockFromChunk(chunk, lx, y, lz);
   }, []);
 
+  // Called every frame with a reused array — copy values, and only touch
+  // React state when the drone crosses a chunk boundary (that is the only
+  // granularity chunk streaming / LOD / DistantTerrain care about).
   const handleDronePosChange = useCallback((pos: Vector3) => {
-    if (
-      Math.abs(pos[0] - dronePos[0]) > 0.5 ||
-      Math.abs(pos[2] - dronePos[2]) > 0.5
-    ) {
-      setDronePos(pos);
-      gameState.setDronePosition(pos);
+    const ref = dronePosRef.current;
+    ref[0] = pos[0]; ref[1] = pos[1]; ref[2] = pos[2];
+
+    const cx = Math.floor(pos[0] / CHUNK_SIZE);
+    const cz = Math.floor(pos[2] / CHUNK_SIZE);
+    if (cx !== droneChunkRef.current.cx || cz !== droneChunkRef.current.cz) {
+      droneChunkRef.current = { cx, cz };
+      setDronePos([pos[0], pos[1], pos[2]]);
     }
-  }, [dronePos, gameState]);
+  }, []);
 
   const handleDroneStateUpdate = useCallback((state: DroneState) => {
     (droneStateRef as React.MutableRefObject<DroneState | null>).current = state;
   }, [droneStateRef]);
 
-  const spawnY = useMemo(() => getTerrainHeight(0, 0) + 20, []);
+  const spawnY = useMemo(() => getTerrainHeight(0, 0) + 2, []);
 
   return (
     <>

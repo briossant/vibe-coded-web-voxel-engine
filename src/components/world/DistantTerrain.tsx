@@ -360,8 +360,9 @@ const DistantTerrain: React.FC<DistantTerrainProps> = ({ chunks, playerPosition,
 
   useFrame(({ clock }) => {
       const time = clock.getElapsedTime();
-      // Throttle updates to 10Hz (0.1s)
-      if (needsUpdateRef.current && (time - lastUpdateRef.current > 0.1)) {
+      // Rebuilding re-uploads every instance buffer (tens of MB) to the GPU,
+      // so keep it rare — 2 Hz is plenty for far terrain.
+      if (needsUpdateRef.current && (time - lastUpdateRef.current > 0.5)) {
           updateGeometry();
           lastUpdateRef.current = time;
           needsUpdateRef.current = false;

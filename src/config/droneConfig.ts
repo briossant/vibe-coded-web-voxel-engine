@@ -77,18 +77,17 @@ export const DEFAULT_DRONE_CONFIG: DroneConfig = {
   angularDragCoeff: 0.12,
 
   rates: {
-    // 300 deg/s max with heavy expo — slow & predictable centre, full authority at edges
-    // Increase rcRate once comfortable; this is a good learning starting point
-    roll:  { rcRate: 300, expo: 0.70 },
-    pitch: { rcRate: 300, expo: 0.70 },
-    yaw:   { rcRate: 160, expo: 0.50 },
+    // 400 deg/s max with heavy expo
+    roll:  { rcRate: 400, expo: 0.70 },
+    pitch: { rcRate: 400, expo: 0.70 },
+    yaw:   { rcRate: 200, expo: 0.50 },
   },
 
-  // PID gains — D on measurement (no derivative kick on stick moves)
+  // PID gains — tuned for stability at 30-60Hz
   pid: {
-    roll:  { kP: 0.10, kI: 0.05, kD: 0.006, kFF: 0.04, iLimit: 0.10 },
-    pitch: { kP: 0.12, kI: 0.06, kD: 0.007, kFF: 0.04, iLimit: 0.10 },
-    yaw:   { kP: 0.20, kI: 0.08, kD: 0.001, kFF: 0.02, iLimit: 0.08 },
+    roll:  { kP: 0.04, kI: 0.03, kD: 0.004, kFF: 0.04, iLimit: 0.10 },
+    pitch: { kP: 0.04, kI: 0.03, kD: 0.004, kFF: 0.04, iLimit: 0.10 },
+    yaw:   { kP: 0.10, kI: 0.04, kD: 0.001, kFF: 0.02, iLimit: 0.08 },
   },
 
   fpvFov: 110,
@@ -100,10 +99,12 @@ export const DEFAULT_DRONE_CONFIG: DroneConfig = {
   //   Axis 0 = Left  stick X → Yaw
   //   Axis 1 = Left  stick Y → Thrust   (up = −1 on most controllers)
   //   Axis 2 = Right stick X → Roll
-  //   Axis 3 = Right stick Y → Pitch    (forward = +1)
+  //   Axis 3 = Right stick Y → Pitch    (forward = −1 on most controllers)
   //
-  // If an axis feels inverted, flip the matching bool below.
-  // If sticks feel swapped, change the axis numbers.
+  // For FPV: 
+  //   Stick Forward (pitch < 0) should be Nose Down (targetPitch > 0)
+  //   Stick Right (roll > 0) should be Roll Right (targetRoll > 0)
+  //   Stick Right (yaw > 0) should be Yaw Right (targetYaw > 0)
   gamepadAxisMapping: { yaw: 0, thrust: 1, roll: 2, pitch: 3 },
-  gamepadInvertAxes:  { roll: false, pitch: false, thrust: false, yaw: false },
+  gamepadInvertAxes:  { roll: false, pitch: true, thrust: true, yaw: false },
 };

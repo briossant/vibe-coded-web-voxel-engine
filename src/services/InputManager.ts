@@ -108,13 +108,15 @@ export class InputManager {
 
     for (const btn of ARM_BUTTONS) {
       const pressed = gp.buttons[btn]?.pressed ?? false;
-      if (pressed && !this.prevButtonStates[btn]) { this.onArmToggle(); break; }
+      const prev = !!this.prevButtonStates[btn];
       this.prevButtonStates[btn] = pressed;
+      if (pressed && !prev) { this.onArmToggle(); break; }
     }
     for (const btn of RESET_BUTTONS) {
       const pressed = gp.buttons[btn]?.pressed ?? false;
-      if (pressed && !this.prevButtonStates[btn]) { this.onReset(); break; }
+      const prev = !!this.prevButtonStates[btn];
       this.prevButtonStates[btn] = pressed;
+      if (pressed && !prev) { this.onReset(); break; }
     }
 
     const hasInput = Math.abs(this.controls.roll)  > 0
@@ -127,11 +129,28 @@ export class InputManager {
   private pollKeyboard = (): void => {
     const k = this.keys;
 
-    this.controls.roll  = k['a'] || k['A'] || k['ArrowLeft']  ? -1
-                        : k['d'] || k['D'] || k['ArrowRight'] ?  1 : 0;
-    this.controls.pitch = k['w'] || k['W'] || k['ArrowUp']    ?  1
-                        : k['s'] || k['S'] || k['ArrowDown']  ? -1 : 0;
-    this.controls.yaw   = k['q'] || k['Q'] ? -1 : k['e'] || k['E'] ? 1 : 0;
+    // Keys are on/off, so target a reduced deflection and ease toward it —
+    // full-stick bang-bang at 400 deg/s is unflyable.
+    const KB_DEFLECTION_RP  = 0.55;
+    const KB_DEFLECTION_YAW = 0.75;
+    const ATTACK  = 0.18; // per 60 Hz tick, ~90 ms to reach target
+    const RELEASE = 0.35; // recenter faster than deflect
+
+    const targetRoll  = (k['a'] || k['A'] || k['ArrowLeft']  ? -1
+                       : k['d'] || k['D'] || k['ArrowRight'] ?  1 : 0) * KB_DEFLECTION_RP;
+    const targetPitch = (k['w'] || k['W'] || k['ArrowUp']    ?  1
+                       : k['s'] || k['S'] || k['ArrowDown']  ? -1 : 0) * KB_DEFLECTION_RP;
+    const targetYaw   = (k['q'] || k['Q'] ? -1 : k['e'] || k['E'] ? 1 : 0) * KB_DEFLECTION_YAW;
+
+    const ease = (current: number, target: number): number => {
+      const rate = target === 0 ? RELEASE : ATTACK;
+      const next = current + (target - current) * rate;
+      return Math.abs(next) < 0.005 && target === 0 ? 0 : next;
+    };
+
+    this.controls.roll  = ease(this.controls.roll,  targetRoll);
+    this.controls.pitch = ease(this.controls.pitch, targetPitch);
+    this.controls.yaw   = ease(this.controls.yaw,   targetYaw);
 
     const inc = 0.008; // throttle per poll tick (~0.5/s increase)
     if (k['Shift'])   this.controls.thrust = Math.min(1, this.controls.thrust + inc);
@@ -140,6 +159,7 @@ export class InputManager {
   };
 
   private handleKeyDown = (e: KeyboardEvent): void => {
+    if (e.repeat) return;
     this.keys[e.key] = true;
 
     // Arm/disarm: Enter or backtick (easy to reach, doesn't conflict with gameplay keys)

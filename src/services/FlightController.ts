@@ -86,7 +86,11 @@ export class FlightController {
     this._invQ.copy(droneQuat).invert();
     this._localAngVel.copy(worldAngVel).applyQuaternion(this._invQ);
 
-    // Map Three.js local axes to FC convention (see Drone.tsx for derivation)
+    // Map Three.js local axes to FC convention.
+    // Body frame: forward = -Z, up = +Y, right = +X (right-handed).
+    //   +X rotation → nose UP        → pilot pitch-down is -X
+    //   +Y rotation → CCW from above → pilot yaw-right  is -Y
+    //   +Z rotation → roll LEFT      → pilot roll-right is -Z
     const currentRoll  = -this._localAngVel.z;
     const currentPitch = -this._localAngVel.x;
     const currentYaw   = -this._localAngVel.y;
@@ -104,12 +108,12 @@ export class FlightController {
     // ── 4. Motor mixing — X-frame props-out ───────────────────────────────
     // roll  > 0 → left motors MORE  (M0 FL, M2 RL)
     // pitch > 0 → rear  motors MORE (M2 RL, M3 RR)
-    // yaw   > 0 → CW    motors MORE (M1 FR, M2 RL)
+    // yaw   > 0 → CCW   motors MORE (M0 FL, M3 RR)
     const t = inputs.thrust;
-    const rawM0 = t + rollCorr  - pitchCorr - yawCorr;
-    const rawM1 = t - rollCorr  - pitchCorr + yawCorr;
-    const rawM2 = t + rollCorr  + pitchCorr + yawCorr;
-    const rawM3 = t - rollCorr  + pitchCorr - yawCorr;
+    const rawM0 = t + rollCorr  - pitchCorr + yawCorr;
+    const rawM1 = t - rollCorr  - pitchCorr - yawCorr;
+    const rawM2 = t + rollCorr  + pitchCorr - yawCorr;
+    const rawM3 = t - rollCorr  + pitchCorr + yawCorr;
 
     // ── 5. Motor lag (first-order filter) ─────────────────────────────────
     const alpha = dt / cfg.motorTimeConstant;
@@ -120,8 +124,6 @@ export class FlightController {
     mo[3] = clamp(mo[3] + (clamp(rawM3, 0, 1) - mo[3]) * alpha, 0, 1);
 
     // ── 6. Motor forces (linear throttle → thrust) ────────────────────────
-    // Linear is more intuitive for a sim: 50% stick = 50% thrust.
-    // Real motors are closer to quadratic, but linearised FC firmware is common.
     const maxF = cfg.maxThrustPerMotor;
     const F0 = maxF * mo[0];
     const F1 = maxF * mo[1];
@@ -132,13 +134,14 @@ export class FlightController {
     // Arm diagonal component (motors at 45° on X frame)
     const A = cfg.armLength * Math.SQRT1_2;
 
-    // Differential-thrust torques (local frame):
-    //   torque.x = A*(front − rear) : + = nose up (pitch back)
-    //   torque.z = A*(right − left) : + = roll left
-    //   torque.y = kQ*(CCW − CW)    : + = yaw left
+    // Differential-thrust torques (local frame, three.js axes):
+    //   torque.x = A*(front − rear)   : + = nose up
+    //   torque.z = A*(right − left)   : + = roll left
+    //   torque.y = kQ*(CW − CCW spin) : reaction opposes prop spin, so
+    //     motors spinning +Y (M0, M3) push the body toward −Y (yaw right)
     const pitchTorque = A * ((F0 + F1) - (F2 + F3));
     const rollTorque  = A * ((F1 + F3) - (F0 + F2));
-    const yawTorque   = cfg.kQ * ((F0 + F3) - (F1 + F2));
+    const yawTorque   = cfg.kQ * ((F1 + F2) - (F0 + F3));
 
     this._thrustOut.set(0, totalThrust, 0);
     this._torqueOut.set(pitchTorque, yawTorque, rollTorque);

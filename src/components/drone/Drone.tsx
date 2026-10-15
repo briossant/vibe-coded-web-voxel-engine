@@ -11,6 +11,7 @@ import { MAX_RENDER_DISTANCE, CHUNK_SIZE } from '@/src/constants';
 
 const DEG2RAD = Math.PI / 180;
 const GRAVITY  = 9.81;
+const PHYSICS_DT = 1 / 240; // fixed physics timestep, decoupled from render fps
 const cfg = DEFAULT_DRONE_CONFIG;
 
 // ─── Collision ───────────────────────────────────────────────────────────────
@@ -38,24 +39,55 @@ function isSolid(blockId: number): boolean {
   catch { return true; }
 }
 
-function checkVoxelCollision(
+function collidesAt(
   pos: THREE.Vector3,
-  vel: THREE.Vector3,
-  angVel: THREE.Vector3,
   getBlock: (x: number, y: number, z: number) => number,
 ): boolean {
   for (const [dx, dy, dz] of COLLISION_OFFSETS) {
     const bx = Math.floor(pos.x + dx);
     const by = Math.floor(pos.y + dy);
     const bz = Math.floor(pos.z + dz);
-    if (isSolid(getBlock(bx, by, bz))) {
-      vel.multiplyScalar(-0.15);
-      angVel.multiplyScalar(0.3);
-      pos.y = Math.max(pos.y, by + 1 + COLLISION_RADIUS);
-      return true;
-    }
+    if (isSolid(getBlock(bx, by, bz))) return true;
   }
   return false;
+}
+
+const RESTITUTION = 0.25;
+
+// Moves pos by vel*dt one axis at a time; on contact the axis move is
+// reverted and its velocity component bounced. Returns ground contact.
+function moveWithCollision(
+  pos: THREE.Vector3,
+  vel: THREE.Vector3,
+  angVel: THREE.Vector3,
+  dt: number,
+  getBlock: (x: number, y: number, z: number) => number,
+): boolean {
+  let hit = false;
+  let grounded = false;
+
+  pos.x += vel.x * dt;
+  if (collidesAt(pos, getBlock)) { pos.x -= vel.x * dt; vel.x *= -RESTITUTION; hit = true; }
+
+  pos.y += vel.y * dt;
+  if (collidesAt(pos, getBlock)) {
+    pos.y -= vel.y * dt;
+    if (vel.y < 0) grounded = true;
+    vel.y *= -RESTITUTION;
+    hit = true;
+  }
+
+  pos.z += vel.z * dt;
+  if (collidesAt(pos, getBlock)) { pos.z -= vel.z * dt; vel.z *= -RESTITUTION; hit = true; }
+
+  if (hit) angVel.multiplyScalar(Math.max(0, 1 - 12 * dt));
+  if (grounded) {
+    // Ground friction on the horizontal plane
+    const f = Math.max(0, 1 - 8 * dt);
+    vel.x *= f; vel.z *= f;
+    if (Math.abs(vel.y) < 0.3) vel.y = 0;
+  }
+  return grounded;
 }
 
 // ─── Quaternion integration (module-level scratch — no allocation per frame) ─
@@ -151,6 +183,7 @@ interface DroneProps {
 const _thrust     = new THREE.Vector3();
 const _torqueW    = new THREE.Vector3();
 const _localTorq  = new THREE.Vector3();
+const _localAngVel = new THREE.Vector3();
 const _invQ       = new THREE.Quaternion();
 const _euler      = new THREE.Euler();
 const _posChange: [number, number, number] = [0, 0, 0];
@@ -166,6 +199,7 @@ const Drone: React.FC<DroneProps> = ({ getBlock, onPositionChange, onStateUpdate
   const isArmedRef        = useRef(false);
   const motorThrottlesRef = useRef<number[]>([0, 0, 0, 0]);
   const frameCountRef     = useRef(0);
+  const accumulatorRef    = useRef(0);
 
   const flightControllerRef = useRef<FlightController | null>(null);
   const inputManagerRef     = useRef<InputManager | null>(null);
@@ -207,7 +241,6 @@ const Drone: React.FC<DroneProps> = ({ getBlock, onPositionChange, onStateUpdate
     const fc = flightControllerRef.current;
     if (!im || !fc) return;
 
-    const dt  = Math.min(rawDt, 0.04);
     const pos    = posRef.current;
     const vel    = velRef.current;
     const quat   = quatRef.current;
@@ -215,49 +248,80 @@ const Drone: React.FC<DroneProps> = ({ getBlock, onPositionChange, onStateUpdate
 
     const inputs = im.getControls();
 
-    if (isArmedRef.current) {
-      const { thrustForceLocal, torqueLocal, motorThrottles } = fc.update(dt, inputs, quat, angVel);
+    // ── Fixed-timestep substepping ────────────────────────────────────────
+    // PID, motor lag filter and integration all run at a constant 240 Hz so
+    // flight behaviour is identical at 30 fps and 144 fps.
+    accumulatorRef.current = Math.min(accumulatorRef.current + rawDt, 0.1);
 
-      // Copy motor throttles (FC returns its own internal array)
-      const mo = motorThrottlesRef.current;
-      mo[0] = motorThrottles[0]; mo[1] = motorThrottles[1];
-      mo[2] = motorThrottles[2]; mo[3] = motorThrottles[3];
+    while (accumulatorRef.current >= PHYSICS_DT) {
+      accumulatorRef.current -= PHYSICS_DT;
+      const dt = PHYSICS_DT;
 
-      // ── Thrust force (world frame) ──────────────────────────────────────
-      _thrust.copy(thrustForceLocal).applyQuaternion(quat);
-      _thrust.y -= GRAVITY * cfg.mass;
+      if (isArmedRef.current) {
+        const { thrustForceLocal, torqueLocal, motorThrottles } = fc.update(dt, inputs, quat, angVel);
 
-      // Linear + quadratic drag
-      const speed = vel.length();
-      if (speed > 0.01) {
-        const dragMag = cfg.linearDragCoeff * speed + cfg.quadraticDragCoeff * speed * speed;
-        _thrust.addScaledVector(vel, -dragMag);
+        // Copy motor throttles (FC returns its own internal array)
+        const mo = motorThrottlesRef.current;
+        mo[0] = motorThrottles[0]; mo[1] = motorThrottles[1];
+        mo[2] = motorThrottles[2]; mo[3] = motorThrottles[3];
+
+        // ── Thrust force (world frame) ────────────────────────────────────
+        _thrust.copy(thrustForceLocal).applyQuaternion(quat);
+        _thrust.y -= GRAVITY * cfg.mass;
+
+        // Linear + quadratic drag
+        const speed = vel.length();
+        if (speed > 0.01) {
+          const dragMag = cfg.linearDragCoeff * speed + cfg.quadraticDragCoeff * speed * speed;
+          _thrust.addScaledVector(vel, -dragMag);
+        }
+        vel.addScaledVector(_thrust, dt / cfg.mass);
+
+        // ── Torques (diagonal inertia tensor in local frame) ──────────────
+        // Rigid body dynamics (Euler's equations) from PDF Page 5.
+        _invQ.copy(quat).invert();
+        _localAngVel.copy(angVel).applyQuaternion(_invQ);
+
+        const Ix = cfg.inertiaRollPitch;
+        const Iy = cfg.inertiaYaw;
+        const Iz = cfg.inertiaRollPitch;
+
+        // Gyroscopic torque: omega x (I * omega)
+        // For Ix=Iz, this simplifies to:
+        //   tau_gyro_x = omega_y * omega_z * (Iz - Iy)
+        //   tau_gyro_y = 0
+        //   tau_gyro_z = omega_x * omega_y * (Iy - Ix)
+        const gyroX = _localAngVel.y * _localAngVel.z * (Iz - Iy);
+        const gyroZ = _localAngVel.x * _localAngVel.y * (Iy - Ix);
+
+        _localTorq.copy(torqueLocal);
+        _localTorq.x = (_localTorq.x - gyroX) / Ix;
+        _localTorq.y = (_localTorq.y) / Iy;
+        _localTorq.z = (_localTorq.z - gyroZ) / Iz;
+
+        _localTorq.applyQuaternion(quat); // world angular acceleration
+        angVel.addScaledVector(_localTorq, dt);
+        angVel.multiplyScalar(Math.max(0, 1 - cfg.angularDragCoeff * dt * 60));
+
+      } else {
+        vel.y -= GRAVITY * dt;
+        const speed = vel.length();
+        if (speed > 0.01) vel.addScaledVector(vel, -cfg.linearDragCoeff * dt);
+        angVel.multiplyScalar(Math.max(0, 1 - cfg.angularDragCoeff * dt * 60));
       }
-      vel.addScaledVector(_thrust, dt / cfg.mass);
 
-      // ── Torques (diagonal inertia tensor in local frame) ────────────────
-      _torqueW.copy(torqueLocal).applyQuaternion(quat);
-      _invQ.copy(quat).invert();
-      _localTorq.copy(_torqueW).applyQuaternion(_invQ);
-      _localTorq.x /= cfg.inertiaRollPitch;
-      _localTorq.y /= cfg.inertiaYaw;
-      _localTorq.z /= cfg.inertiaRollPitch;
-      _localTorq.applyQuaternion(quat); // back to world
-      angVel.addScaledVector(_localTorq, dt);
-      angVel.multiplyScalar(Math.max(0, 1 - cfg.angularDragCoeff * dt * 60));
-
-    } else {
-      vel.y -= GRAVITY * dt;
-      const speed = vel.length();
-      if (speed > 0.01) vel.addScaledVector(vel, -cfg.linearDragCoeff * dt);
-      angVel.multiplyScalar(Math.max(0, 1 - cfg.angularDragCoeff * dt * 60));
+      moveWithCollision(pos, vel, angVel, dt, getBlock);
+      integrateRotation(quat, angVel, dt);
     }
 
-    pos.addScaledVector(vel, dt);
-    integrateRotation(quat, angVel, dt);
-    checkVoxelCollision(pos, vel, angVel, getBlock);
+    // ── NaN / Infinity safety ───────────────────────────────────────────
+    if (isNaN(pos.x) || isNaN(vel.x) || isNaN(quat.x) || !isFinite(pos.x)) {
+      console.warn('Drone: Physics explosion detected! Resetting...');
+      handleReset();
+      return;
+    }
 
-    if (pos.y < 0) {
+    if (pos.y < -5) {
       pos.y = 0;
       vel.set(0, 0, 0);
       angVel.set(0, 0, 0);
@@ -275,12 +339,12 @@ const Drone: React.FC<DroneProps> = ({ getBlock, onPositionChange, onStateUpdate
     if (++frameCountRef.current % 6 === 0) {
       _euler.setFromQuaternion(quat, 'YXZ');
       onStateUpdate({
-        position:       pos,
-        velocity:       vel,
-        euler:          _euler,
+        position:       pos.clone(),
+        velocity:       vel.clone(),
+        euler:          _euler.clone(),
         isArmed:        isArmedRef.current,
-        motorThrottles: motorThrottlesRef.current,
-        controlInputs:  inputs,
+        motorThrottles: [...motorThrottlesRef.current],
+        controlInputs:  { ...inputs },
       });
     }
   });
